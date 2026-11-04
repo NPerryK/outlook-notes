@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mail Notes</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root {
+      --bg: #faf9f7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
+      --line: #e6e2db; --accent: #b4540f; --accent-soft: #fbecd9;
+      --danger: #b42318; --note: #fff8e6; --note-line: #f1dfae;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1b19; --panel: #252321; --ink: #ece8e1; --muted: #a39d93;
+        --line: #3a3733; --accent: #f0a35e; --accent-soft: #3a2a1a;
+        --danger: #f2877d; --note: #2e2a20; --note-line: #4a4230;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 14px/1.5 "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+    }
+    header { padding: 12px 14px 0; }
+    .subject {
+      font-weight: 600; font-size: 13px; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tabs { display: flex; gap: 4px; margin-top: 10px; border-bottom: 1px solid var(--line); }
+    .tab {
+      background: none; border: none; padding: 8px 10px; cursor: pointer;
+      color: var(--muted); font: inherit; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+    .badge {
+      display: inline-block; min-width: 18px; padding: 0 5px; margin-inline-start: 4px;
+      border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; text-align: center;
+    }
+    main { padding: 12px 14px 20px; }
+    .view[hidden] { display: none; }
+
+    .composer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+    textarea {
+      width: 100%; min-height: 70px; resize: vertical; border: none; outline: none;
+      background: transparent; color: var(--ink); font: inherit;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    .hint { font-size: 11px; color: var(--muted); }
+    .btn {
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      border-radius: 6px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
+    }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .colors { display: flex; gap: 6px; }
+    .swatch { width: 16px; height: 16px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+    .swatch[aria-pressed="true"] { border-color: var(--ink); }
+
+    .notes { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 10px; }
+    .note {
+      background: var(--note); border: 1px solid var(--note-line); border-inline-start: 4px solid var(--c, #e0b94a);
+      border-radius: 6px; padding: 8px 10px;
+    }
+    .note-text { white-space: pre-wrap; word-wrap: break-word; }
+    .note-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+    .note-actions button {
+      background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 2px 4px;
+    }
+    .note-actions button:hover { color: var(--accent); }
+    .note-actions button.del:hover { color: var(--danger); }
+    .empty { color: var(--muted); text-align: center; padding: 24px 8px; font-size: 13px; }
+
+    .search {
+      width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--panel); color: var(--ink); font: inherit;
+    }
+    .index { list-style: none; padding: 0; margin: 10px 0 0; }
+    .index li { border-bottom: 1px solid var(--line); }
+    .index button {
+      display: block; width: 100%; text-align: start; background: none; border: none;
+      padding: 9px 2px; cursor: pointer; color: var(--ink); font: inherit;
+    }
+    .index button:hover { background: var(--accent-soft); }
+    .idx-subj { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .idx-prev { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .toast {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      background: var(--ink); color: var(--bg); padding: 6px 14px; border-radius: 6px; font-size: 12px;
+      opacity: 0; transition: opacity .2s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="subject" id="subject">טוען…</div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-item" aria-selected="true">מייל זה <span class="badge" id="count">0</span></button>
+      <button class="tab" role="tab" id="tab-all" aria-selected="false">כל ההערות</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="view" id="view-item">
+      <div class="composer">
+        <textarea id="input" placeholder="כתוב הערה למייל הזה…"></textarea>
+        <div class="row">
+          <div class="colors" id="colors"></div>
+          <div>
+            <button class="btn" id="cancel" hidden>ביטול</button>
+            <button class="btn primary" id="save" disabled>הוסף</button>
+          </div>
+        </div>
+        <div class="hint">Ctrl+Enter לשמירה</div>
+      </div>
+      <ul class="notes" id="notes"></ul>
+    </section>
+
+    <section class="view" id="view-all" hidden>
+      <input class="search" id="search" type="search" placeholder="חיפוש בהערות…">
+      <ul class="index" id="index"></ul>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="taskpane.js"></script>
+</body>
+</html>
