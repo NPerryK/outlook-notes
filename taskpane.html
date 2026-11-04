@@ -1,44 +1,49 @@
 <!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mail Notes</title>
+  <title>My Notes</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
     :root {
       --bg: #faf9f7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
       --line: #e6e2db; --accent: #b4540f; --accent-soft: #fbecd9;
       --danger: #b42318; --note: #fff8e6; --note-line: #f1dfae;
+      --over-bg: #fde2e1; --over-ink: #b42318; --today-bg: #fdecd0; --today-ink: #9a5800;
+      --soon-bg: #e4eefb; --soon-ink: #1f5fa8;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #1c1b19; --panel: #252321; --ink: #ece8e1; --muted: #a39d93;
         --line: #3a3733; --accent: #f0a35e; --accent-soft: #3a2a1a;
         --danger: #f2877d; --note: #2e2a20; --note-line: #4a4230;
+        --over-bg: #4a2422; --over-ink: #ffb4ab; --today-bg: #47331a; --today-ink: #ffcf8a;
+        --soon-bg: #1f3149; --soon-ink: #a9cbf5;
       }
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 14px/1.5 "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+      font: 14px/1.5 "Segoe UI", Arial, sans-serif;
     }
     header { padding: 12px 14px 0; }
     .subject {
       font-weight: 600; font-size: 13px; color: var(--muted);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .tabs { display: flex; gap: 4px; margin-top: 10px; border-bottom: 1px solid var(--line); }
+    .tabs { display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--line); }
     .tab {
-      background: none; border: none; padding: 8px 10px; cursor: pointer;
-      color: var(--muted); font: inherit; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      background: none; border: none; padding: 8px 9px; cursor: pointer;
+      color: var(--muted); font: inherit; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px;
     }
     .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
     .badge {
       display: inline-block; min-width: 18px; padding: 0 5px; margin-inline-start: 4px;
       border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; text-align: center;
     }
-    main { padding: 12px 14px 20px; }
+    .badge.alert { background: var(--over-bg); color: var(--over-ink); }
+    main { padding: 12px 14px 24px; }
     .view[hidden] { display: none; }
 
     .composer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
@@ -46,7 +51,7 @@
       width: 100%; min-height: 70px; resize: vertical; border: none; outline: none;
       background: transparent; color: var(--ink); font: inherit;
     }
-    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
     .hint { font-size: 11px; color: var(--muted); }
     .btn {
       border: 1px solid var(--line); background: var(--panel); color: var(--ink);
@@ -54,74 +59,169 @@
     }
     .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     .btn:disabled { opacity: .5; cursor: default; }
+    .btn.wide { width: 100%; }
     .colors { display: flex; gap: 6px; align-items: center; }
-    .label-name { font-size: 12px; color: var(--muted); margin-inline-start: 4px; white-space: nowrap; }
-    .swatch { width: 16px; height: 16px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+    .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
     .swatch[aria-pressed="true"] { border-color: var(--ink); }
+    .label-name { font-size: 12px; color: var(--muted); margin-inline-start: 4px; white-space: nowrap; }
+    .due-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .due-row input {
+      border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px;
+      background: var(--panel); color: var(--ink); font: inherit; font-size: 12px;
+    }
+    .link-btn { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 0 2px; }
+    .link-btn:hover { color: var(--accent); }
 
     .notes { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 10px; }
     .note {
       background: var(--note); border: 1px solid var(--note-line); border-inline-start: 4px solid var(--c, #e0b94a);
       border-radius: 6px; padding: 8px 10px;
     }
-    .note-text { white-space: pre-wrap; word-wrap: break-word; }
-    .note-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+    .note.done { opacity: .62; }
+    .note.done .note-text { text-decoration: line-through; }
+    .note-text { white-space: pre-wrap; word-wrap: break-word; unicode-bidi: plaintext; }
+    .note-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+    .note-actions { white-space: nowrap; }
     .note-actions button {
       background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 2px 4px;
     }
     .note-actions button:hover { color: var(--accent); }
     .note-actions button.del:hover { color: var(--danger); }
-    .empty { color: var(--muted); text-align: center; padding: 24px 8px; font-size: 13px; }
+    .chip { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 8px; line-height: 17px; white-space: nowrap; }
+    .chip.overdue { background: var(--over-bg); color: var(--over-ink); font-weight: 600; }
+    .chip.today { background: var(--today-bg); color: var(--today-ink); font-weight: 600; }
+    .chip.soon, .chip.later { background: var(--soon-bg); color: var(--soon-ink); }
+    .empty { color: var(--muted); text-align: center; padding: 24px 8px; font-size: 13px; list-style: none; }
 
-    .search {
+    .search, select.search {
       width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--panel); color: var(--ink); font: inherit;
+      background: var(--panel); color: var(--ink); font: inherit; font-size: 13px;
     }
+    .filters { display: flex; gap: 6px; margin-top: 8px; }
     .index { list-style: none; padding: 0; margin: 10px 0 0; }
     .index li { border-bottom: 1px solid var(--line); }
-    .index button {
+    .index button.rowbtn {
       display: block; width: 100%; text-align: start; background: none; border: none;
       padding: 9px 2px; cursor: pointer; color: var(--ink); font: inherit;
     }
-    .index button:hover { background: var(--accent-soft); }
-    .idx-subj { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .index button.rowbtn:hover { background: var(--accent-soft); }
+    .idx-top { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+    .idx-subj { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
     .idx-prev { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .field-label { font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 5px; }
+    .field-label:first-child { margin-top: 0; }
+    .checks { display: flex; flex-direction: column; gap: 4px; }
+    .check { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; }
+    .check .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .two { display: flex; gap: 8px; }
+    .two > * { flex: 1; }
+    .actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    #copyBox { width: 100%; height: 90px; margin-top: 8px; font: 11px/1.4 Consolas, monospace; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+
     .toast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
       background: var(--ink); color: var(--bg); padding: 6px 14px; border-radius: 6px; font-size: 12px;
-      opacity: 0; transition: opacity .2s; pointer-events: none;
+      opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%; text-align: center;
     }
     .toast.show { opacity: 1; }
+
+    /* touch screens (Outlook mobile) */
+    @media (pointer: coarse) {
+      .swatch { width: 26px; height: 26px; }
+      .note-actions button, .link-btn { padding: 6px 8px; font-size: 13px; }
+      .tab { padding: 10px 10px; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <div class="subject" id="subject">טוען…</div>
+    <div class="subject" id="subject">Loading…</div>
     <div class="tabs" role="tablist">
-      <button class="tab" role="tab" id="tab-item" aria-selected="true">מייל זה <span class="badge" id="count">0</span></button>
-      <button class="tab" role="tab" id="tab-all" aria-selected="false">כל ההערות</button>
+      <button class="tab" role="tab" id="tab-item" aria-selected="true">This email <span class="badge" id="count">0</span></button>
+      <button class="tab" role="tab" id="tab-all" aria-selected="false">All notes <span class="badge alert" id="dueCount" hidden></span></button>
+      <button class="tab" role="tab" id="tab-sum" aria-selected="false">Summary</button>
     </div>
   </header>
 
   <main>
+    <!-- This email -->
     <section class="view" id="view-item">
       <div class="composer">
-        <textarea id="input" placeholder="כתוב הערה למייל הזה…"></textarea>
+        <textarea id="input" dir="auto" placeholder="Write a note for this email…"></textarea>
         <div class="row">
           <div class="colors" id="colors"></div>
+        </div>
+        <div class="row">
+          <div class="due-row">
+            <label for="due">⏰ Due</label>
+            <input type="date" id="due">
+            <button class="link-btn" id="dueClear" title="Clear due date">✕</button>
+          </div>
           <div>
-            <button class="btn" id="cancel" hidden>ביטול</button>
-            <button class="btn primary" id="save" disabled>הוסף</button>
+            <button class="btn" id="cancel" hidden>Cancel</button>
+            <button class="btn primary" id="save" disabled>Add</button>
           </div>
         </div>
-        <div class="hint">Ctrl+Enter לשמירה</div>
+        <div class="hint">Ctrl+Enter to save</div>
       </div>
       <ul class="notes" id="notes"></ul>
     </section>
 
+    <!-- All notes -->
     <section class="view" id="view-all" hidden>
-      <input class="search" id="search" type="search" placeholder="חיפוש בהערות…">
+      <input class="search" id="search" type="search" dir="auto" placeholder="Search notes…">
+      <div class="filters">
+        <select class="search" id="idxFilter">
+          <option value="all">All</option>
+          <option value="open">Open</option>
+          <option value="due">With due date</option>
+          <option value="late">Overdue / today</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
       <ul class="index" id="index"></ul>
+    </section>
+
+    <!-- Summary -->
+    <section class="view" id="view-sum" hidden>
+      <div class="field-label">Categories</div>
+      <div class="checks" id="sumLabels"></div>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="sumDueTop"> Show overdue &amp; due today at the top</label>
+
+      <div class="two">
+        <div>
+          <div class="field-label">Period</div>
+          <select class="search" id="sumRange">
+            <option value="today">Today</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="all">All notes</option>
+          </select>
+        </div>
+        <div>
+          <div class="field-label">Group by</div>
+          <select class="search" id="sumGroup">
+            <option value="label">Category</option>
+            <option value="ref">Document no.</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-label">Document number prefixes</div>
+      <input class="search" id="sumPrefixes" type="text" placeholder="CDF, XWD, E">
+      <div class="hint">Comma separated. Finds numbers like “CDF 740.A” in subjects and notes.</div>
+
+      <div class="field-label">Send to</div>
+      <input class="search" id="sumTo" type="text" placeholder="name@company.com">
+
+      <div class="hint" id="sumInfo" style="margin-top:10px"></div>
+      <div class="actions">
+        <button class="btn primary wide" id="sumGo">Create summary email</button>
+        <button class="btn wide" id="sumCopy">📋 Copy table for Excel</button>
+      </div>
+      <textarea id="copyBox" hidden readonly></textarea>
+      <div class="hint" style="margin-top:8px">The email opens ready to review – just click Send. Your choices are saved for next time.</div>
     </section>
   </main>
 
