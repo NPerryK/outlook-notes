@@ -42,6 +42,7 @@
   let compose = false;     // true when the current item is being written
   let subject = "";
   let composeId = null;    // draft id (compose mode, after the first save)
+  let showDone = false;    // done notes are collapsed by default
 
   const $ = (id) => document.getElementById(id);
   const ok = (r) => r && r.status === Office.AsyncResultStatus.Succeeded;
@@ -98,6 +99,7 @@
     const item = Office.context.mailbox.item;
     resetComposer();
     composeId = null;
+    showDone = false;
     if (!item) {
       $("subject").textContent = "No email selected";
       notes = []; props = null; renderNotes();
@@ -180,8 +182,12 @@
   function syncCategory() {
     if (!categoriesSupported()) return;
     const item = Office.context.mailbox.item;
-    const wanted = [...new Set(notes.map((n) => labelFor(n.color).name))];
-    if (notes.some((n) => n.due && !isDone(n))) wanted.push(FOLLOW.name);
+    // Only open notes mark the email; "Done" appears only when every note is done
+    const open = notes.filter((n) => !isDone(n));
+    const wanted = open.length
+      ? [...new Set(open.map((n) => labelFor(n.color).name))]
+      : notes.length ? [labelFor(DONE_HEX).name] : [];
+    if (open.some((n) => n.due)) wanted.push(FOLLOW.name);
     const ours = new Set(ALL_CATS.map((l) => l.name).concat(OLD_NAMES));
     item.categories.getAsync((r) => {
       if (!ok(r)) return;
@@ -260,12 +266,57 @@
     renderNotes();
   }
 
-  function deleteNote(id) {
-    if (!window.confirm("Delete this note?")) return;
+  async function deleteNote(id) {
+    const yes = await confirmDialog("Delete this note?",
+      "This note will be permanently deleted. This can't be undone.", "Delete");
+    if (!yes) return;
     notes = notes.filter((x) => x.id !== id);
     if (editingId === id) resetComposer();
     persist("Note deleted");
     renderNotes();
+  }
+
+  async function deleteDone() {
+    const done = notes.filter(isDone);
+    if (!done.length) return;
+    const all = done.length === notes.length;
+    const many = (n) => n + " note" + (n > 1 ? "s" : "");
+    const yes = all
+      ? await confirmDialog("Delete all notes?",
+        "Are you sure you want to delete all " + many(notes.length) +
+        " on this email? This can't be undone.", "Delete all")
+      : await confirmDialog("Delete done notes?",
+        "Are you sure you want to delete " + many(done.length) +
+        " marked as done? Open notes are kept. This can't be undone.", "Delete");
+    if (!yes) return;
+    notes = notes.filter((n) => !isDone(n));
+    showDone = false;
+    persist(all ? "All notes deleted" : "Done notes deleted");
+    renderNotes();
+  }
+
+  // In-pane warning dialog (the browser's confirm() is blocked in Outlook add-ins).
+  // Cancel has the focus, so Enter or Esc never deletes by accident.
+  function confirmDialog(title, message, okLabel) {
+    return new Promise((resolve) => {
+      const m = $("modal");
+      $("modalTitle").textContent = title;
+      $("modalText").textContent = message;
+      $("modalOk").textContent = okLabel;
+      m.hidden = false;
+      const close = (val) => {
+        m.hidden = true;
+        $("modalOk").onclick = $("modalCancel").onclick = m.onclick = null;
+        document.removeEventListener("keydown", onKey, true);
+        resolve(val);
+      };
+      const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(false); } };
+      $("modalOk").onclick = () => close(true);
+      $("modalCancel").onclick = () => close(false);
+      m.onclick = (e) => { if (e.target === m) close(false); }; // click outside = cancel
+      document.addEventListener("keydown", onKey, true);
+      $("modalCancel").focus();
+    });
   }
 
   function resetComposer() {
@@ -701,44 +752,56 @@
 
   // ---------- rendering ----------
   function renderNotes() {
-    $("count").textContent = notes.length;
+    const open = notes.filter((n) => !isDone(n));
+    const done = notes.filter(isDone);
+    $("count").textContent = open.length;
     const ul = $("notes");
     ul.innerHTML = "";
     if (!notes.length) {
       ul.innerHTML = '<li class="empty">No notes on this email</li>';
-      return;
+    } else if (!open.length) {
+      ul.innerHTML = '<li class="empty">✓ All notes on this email are done</li>';
     }
-    // open notes first (earliest due first), done notes at the bottom
-    const sorted = notes.slice().sort((a, b) =>
-      isDone(a) - isDone(b) ||
-      (a.due && !isDone(a) ? dueTs(a.due) : 9e15) - (b.due && !isDone(b) ? dueTs(b.due) : 9e15) ||
-      b.updated - a.updated);
-    sorted.forEach((n) => {
-      const li = document.createElement("li");
-      const lbl = labelFor(n.color);
-      const done = isDone(n);
-      li.className = "note" + (done ? " done" : "");
-      li.style.setProperty("--c", lbl.hex);
-      const edited = n.updated !== n.created ? " (edited)" : "";
-      li.innerHTML =
-        '<div class="note-text" dir="auto"></div>' +
-        '<div class="note-meta"><span><span class="lbl"></span> · <span class="dt"></span> <span class="chip"></span></span>' +
-        '<span class="note-actions"><button class="tick"></button><button class="edit">Edit</button>' +
-        '<button class="del">Delete</button></span></div>';
-      li.querySelector(".note-text").textContent = n.text;
-      li.querySelector(".lbl").textContent = lbl.name;
-      li.querySelector(".dt").textContent = fmtDate(n.updated) + edited;
-      const chip = li.querySelector(".chip");
-      const st = dueState(n);
-      if (st) { chip.textContent = dueText(n); chip.classList.add(st); } else chip.remove();
-      const tick = li.querySelector(".tick");
-      tick.textContent = done ? "↺ Reopen" : "✓ Done";
-      tick.title = done ? "Reopen this note" : "Mark as done";
-      tick.onclick = () => toggleDone(n.id);
-      li.querySelector(".edit").onclick = () => editNote(n.id);
-      li.querySelector(".del").onclick = () => deleteNote(n.id);
-      ul.appendChild(li);
-    });
+    // open notes: earliest due first, then newest
+    open.sort((a, b) => (a.due ? dueTs(a.due) : 9e15) - (b.due ? dueTs(b.due) : 9e15) ||
+      b.updated - a.updated).forEach((n) => ul.appendChild(noteEl(n)));
+
+    $("doneWrap").hidden = !done.length;
+    const dl = $("doneNotes");
+    dl.innerHTML = "";
+    if (done.length) {
+      $("doneToggle").textContent = (showDone ? "▾" : "▸") + " Done (" + done.length + ")";
+      $("doneClear").textContent = open.length ? "🗑 Delete done notes" : "🗑 Delete all notes";
+      dl.hidden = !showDone;
+      done.sort((a, b) => b.updated - a.updated).forEach((n) => dl.appendChild(noteEl(n)));
+    }
+  }
+
+  function noteEl(n) {
+    const li = document.createElement("li");
+    const lbl = labelFor(n.color);
+    const done = isDone(n);
+    li.className = "note" + (done ? " done" : "");
+    li.style.setProperty("--c", lbl.hex);
+    const edited = n.updated !== n.created ? " (edited)" : "";
+    li.innerHTML =
+      '<div class="note-text" dir="auto"></div>' +
+      '<div class="note-meta"><span><span class="lbl"></span> · <span class="dt"></span> <span class="chip"></span></span>' +
+      '<span class="note-actions"><button class="tick"></button><button class="edit">Edit</button>' +
+      '<button class="del">Delete</button></span></div>';
+    li.querySelector(".note-text").textContent = n.text;
+    li.querySelector(".lbl").textContent = lbl.name;
+    li.querySelector(".dt").textContent = fmtDate(n.updated) + edited;
+    const chip = li.querySelector(".chip");
+    const st = dueState(n);
+    if (st) { chip.textContent = dueText(n); chip.classList.add(st); } else chip.remove();
+    const tick = li.querySelector(".tick");
+    tick.textContent = done ? "↺ Reopen" : "✓ Done";
+    tick.title = done ? "Reopen this note" : "Mark as done";
+    tick.onclick = () => toggleDone(n.id);
+    li.querySelector(".edit").onclick = () => editNote(n.id);
+    li.querySelector(".del").onclick = () => deleteNote(n.id);
+    return li;
   }
 
   function buildColors() {
@@ -775,6 +838,8 @@
     $("save").onclick = saveNote;
     $("cancel").onclick = resetComposer;
     $("dueClear").onclick = () => { $("due").value = ""; };
+    $("doneToggle").onclick = () => { showDone = !showDone; renderNotes(); };
+    $("doneClear").onclick = deleteDone;
     $("tab-item").onclick = () => switchTab("item");
     $("tab-all").onclick = () => switchTab("all");
     $("tab-sum").onclick = () => switchTab("sum");
