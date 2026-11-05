@@ -273,6 +273,7 @@
     .row-subj .ic { color: var(--ink3); }
     .row-subj bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row-sub { display: flex; align-items: center; gap: 7px; margin-top: 3px; font-size: 11.5px; min-width: 0; color: var(--ink2); }
+    .row-from { display: block; margin-top: 1px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .row-prev { display: block; margin-top: 2px; font-size: 12px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; text-align: start; }
     .dots { display: inline-flex; gap: 2px; }
     .dots i { width: 6px; height: 6px; border-radius: 50%; }
@@ -333,6 +334,81 @@
     .trow-subj:hover bdi { color: var(--blue); text-decoration: underline; }
     .trow-actions { margin-inline-start: auto; display: flex; gap: 1px; }
     .today-foot { font-size: 11.5px; margin-top: 4px; }
+
+    /* ---------- courts (Today) ---------- */
+    .courts { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--frame); border-radius: 3px; background: var(--sheet);
+      box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--rule); margin: 3px 3px 14px; }
+    .court { display: block; text-align: start; background: none; border: 0; padding: 7px 10px 8px; border-top: 3px solid var(--c); min-width: 0; }
+    .court + .court { border-inline-start: 1px solid var(--rule); }
+    .court.mine { --c: var(--blue); }
+    .court.theirs { --c: #a066d3; }
+    .court:hover { background: color-mix(in srgb, var(--c) 7%, transparent); }
+    .court-k { display: block; font-size: 11px; color: var(--ink2); font-weight: 500; }
+    .court b { display: block; font-size: 24px; line-height: 1.1; font-weight: 600; color: var(--ink); }
+    .court-sub { display: block; font-size: 11px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .court-sub.alert { color: var(--over-ink); font-weight: 600; }
+    .court.theirs .court-sub.alert { color: var(--today-ink); }
+    .court-block { margin-top: 6px; scroll-margin-top: 8px; }
+    .court-block + .court-block { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule); }
+    .court-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 13.5px; font-weight: 600; }
+    .court-h::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--c); align-self: center; }
+    .court-h.mine { --c: var(--blue); }
+    .court-h.theirs { --c: #a066d3; }
+    .court-hint { font-size: 11.5px; font-weight: 400; color: var(--ink3); }
+    .court-empty { font-size: 12px; color: var(--ink3); padding: 4px 0 2px 17px; }
+    .person { margin: 0 0 12px; }
+    .person-h { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .person-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+    .person-name bdi { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .person-name .muted { font-size: 11px; }
+    .person.long .person-name .muted { color: var(--today-ink); font-weight: 500; }
+    .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10.5px; font-weight: 600; letter-spacing: .02em; color: color-mix(in srgb, var(--t) 80%, var(--ink));
+      background: color-mix(in srgb, var(--t) 18%, var(--sheet)); border: 1px solid color-mix(in srgb, var(--t) 40%, transparent); }
+    .person .trow { margin-inline-start: 13px; }
+    .asker { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--ink3); max-width: 120px; }
+    .asker bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ---------- requests in the email ---------- */
+    .reqs { background: var(--sheet); border: 1px solid var(--rule); border-inline-start: 3px solid var(--blue); border-radius: 8px; padding: 8px 10px 6px; margin-bottom: 10px; }
+    .reqs.hand { border-inline-start-color: #a066d3; }
+    .reqs.all-done { border-inline-start-color: var(--ok); }
+    .reqs-h { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
+    .reqs-h .ic { color: var(--blue); }
+    .reqs.hand .reqs-h .ic { color: #a066d3; }
+    .reqs-h > span:nth-child(2) { flex: 1; min-width: 0; }
+    .reqs ul { list-style: none; margin: 0; padding: 0; }
+    .req { padding: 6px 0 4px; border-top: 1px solid var(--rule2); }
+    .req:first-child { border-top: 0; }
+    .req-text { font-size: 12.5px; line-height: 1.45; color: var(--ink); unicode-bidi: plaintext; padding-inline-start: 9px; border-inline-start: 2px solid var(--blue-soft); }
+    .req.tracked .req-text { color: var(--ink3); border-inline-start-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+    .req-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-height: 24px; flex-wrap: wrap; }
+    .req-btns { margin-inline-start: auto; display: flex; align-items: center; gap: 10px; }
+    .req-ok { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ok); font-weight: 500; }
+    .reqs-more { margin: 2px 0 0; }
+
+    /* ---------- dossier ---------- */
+    .dos-strip { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--frame); border-radius: 3px; background: var(--sheet); margin: 10px 0 2px; }
+    .dos-cell { padding: 5px 8px 6px; border-inline-start: 1px solid var(--rule); border-top: 3px solid var(--c, transparent); min-width: 0; }
+    .dos-cell:first-child { border-inline-start: 0; }
+    .dos-cell.mine { --c: var(--blue); }
+    .dos-cell.theirs { --c: #a066d3; }
+    .dos-cell.done { --c: var(--ok); }
+    .dos-cell.age { --c: var(--frame); }
+    .dos-cell b { display: block; font-size: 17px; line-height: 1.15; }
+    .dos-cell span { display: block; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .timeline { list-style: none; margin: 0; padding: 0 0 0 14px; position: relative; }
+    .timeline::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px; width: 2px; background: var(--rule); border-radius: 1px; }
+    .tl-item { position: relative; padding: 0 0 12px 8px; }
+    .tl-item::before { content: ""; position: absolute; left: -14px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--sheet);
+      border: 2px solid var(--c, var(--frame)); box-sizing: border-box; }
+    .tl-item.mine { --c: var(--blue); }
+    .tl-item.theirs { --c: #a066d3; }
+    .tl-item.done { --c: var(--ok); }
+    .tl-item.mine::before, .tl-item.theirs::before { background: var(--c); }
+    .tl-when { display: flex; gap: 8px; align-items: baseline; font-size: 11px; color: var(--ink2); font-weight: 500; margin-bottom: 1px; }
+    .tl-when bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+    .mblock.in-tl { padding-top: 0; border-top: 0; }
 
     /* ---------- stages ---------- */
     .stage-bar { display: flex; gap: 2px; margin: 10px 0 2px; }
@@ -442,6 +518,19 @@
         <p>You were waiting for a reply in this thread:</p>
         <ul id="replyList"></ul>
         <button class="linkbtn" id="replyDismiss">Not now</button>
+      </div>
+
+      <div class="reqs" id="reqBox" hidden>
+        <div class="reqs-h"><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9.5h3v3.5H3zM3 9.5c0-3 1-4.5 3-5"/><path d="M9.5 9.5h3v3.5h-3zM9.5 9.5c0-3 1-4.5 3-5"/></svg></span><span id="reqTitle"></span>
+          <button class="linkbtn small" id="reqAll">Track all</button></div>
+        <ul id="reqList"></ul>
+        <button class="linkbtn small reqs-more" id="reqMore" hidden></button>
+      </div>
+
+      <div class="reqs hand" id="handBox" hidden>
+        <div class="reqs-h"><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7.5l11-5-4.5 11-2-4z"/><path d="M7 9.5l6.5-7"/></svg></span><span id="handTitle"></span>
+          <button class="linkbtn small" id="handInsert">Insert</button><button class="linkbtn small" id="handAll">Hand over all</button></div>
+        <ul id="handList"></ul>
       </div>
 
       <div class="callout neutral" id="restoreBox" hidden>
@@ -563,7 +652,9 @@
         <div class="stage-bar" id="stageBar" hidden></div>
         <ul class="list" id="tagList"></ul>
         <label class="check" style="margin-top:14px"><input type="checkbox" id="tagByStage"> Group labels by stage</label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagAuto"> Add emails to a label automatically when the subject has its document number</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagCats"> Show labels as Outlook categories</label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagHasNotes"> Mark every email that has notes with “📓 Notes”</label>
         <div class="hint" style="margin-inline-start:21px">Lets you filter and search your mailbox by label.</div>
       </div>
       <div id="tagDetail" hidden>
@@ -573,6 +664,7 @@
         </div>
         <div class="tag-title" id="tagTitle"></div>
         <div class="hint" id="tagStats"></div>
+        <div class="dos-strip" id="dosStrip" hidden></div>
         <div class="flabel" style="margin-top:12px">Stage</div>
         <div class="status-pick stage-pick" id="stagePick" role="group" aria-label="Stage"></div>
         <div class="tag-actions">
@@ -676,6 +768,6 @@
     </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="taskpane.js?v=3.0.0"></script>
+  <script src="taskpane.js?v=3.2.0"></script>
 </body>
 </html>
