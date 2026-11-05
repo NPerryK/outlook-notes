@@ -10,8 +10,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "2.0.0";
+  const VERSION = "2.1.0";
   const PROP_KEY = "mailNotes";          // custom property on the item
+  const LBL_KEY = "mailLabels";          // labels on the email itself (no note needed)
   const CP_LIMIT = 2400;                 // Outlook limit: 2,500 characters per add-in per item (measured in bytes to be safe)
   const IDX_KEY = "myNotesIdx2";         // compressed overview (roaming)
   const OLD_IDX_KEY = "mailNotesIndex";  // overview of versions 1.x
@@ -70,6 +71,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   let ctx = null;          // {item, compose, meeting, conv, attachments}
   let props = null;        // CustomProperties of the current item
   let notes = [];          // [{id, text, color, due, tags, att, prev, created, updated, doneAt, hist}]
+  let emailTags = [];      // labels on the email itself
+  let lblAt = 0;           // when the email labels last changed
   let subject = "";
   let composeId = null;
   let editingId = null;
@@ -248,24 +251,27 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       return JSON.parse(json || "[]").map(fromCompact);
     } catch (e) { return []; }
   }
+  const lblValue = () => JSON.stringify({ t: emailTags, u: lblAt });
+  const labelsCost = () => (emailTags.length ? byteLen(JSON.stringify({ [LBL_KEY]: lblValue() })) : 0);
   // Encodes the notes; drops old edit history if needed. null = does not fit.
   function fitNotes(list) {
+    const limit = CP_LIMIT - labelsCost();
     let enc = encodeNotes(list);
-    if (cpSize(enc) <= CP_LIMIT) return enc;
+    if (cpSize(enc) <= limit) return enc;
     const copy = list.map((n) => Object.assign({}, n, { hist: (n.hist || []).slice() }));
     for (;;) {
       const withHist = copy.filter((n) => n.hist.length);
       if (!withHist.length) break;
       withHist.forEach((n) => n.hist.pop());
       enc = encodeNotes(copy);
-      if (cpSize(enc) <= CP_LIMIT) {
+      if (cpSize(enc) <= limit) {
         list.forEach((n, i) => { n.hist = copy[i].hist; });
         return enc;
       }
     }
     return null;
   }
-  const spaceUsed = () => (notes.length ? cpSize(encodeNotes(notes)) / CP_LIMIT : 0);
+  const spaceUsed = () => ((notes.length ? cpSize(encodeNotes(notes)) : 0) + labelsCost()) / CP_LIMIT;
 
   // ===================================================================
   // Roaming storage (overview, labels, templates, settings)
@@ -311,7 +317,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         if (!v) continue;
         v.n = (v.n || []).filter((n) => n.id !== d.id);
         v.c = v.n.length;
-        if (!v.n.length) delete idx[d.k];
+        if (!v.n.length && !(v.lb && v.lb.length)) delete idx[d.k];
       }
       z = compressIdx(idx);
       if (byteLen(z) <= IDX_BUDGET) return z;
@@ -348,7 +354,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   function allEntries() {
     const idx = getIndex(), st = getTagStore();
-    return Object.keys(idx).map((k) => ({ key: k, id: idx[k].id || k, v: idx[k], notes: entryNotes(idx[k], st) }));
+    return Object.keys(idx).map((k) => {
+      const labels = normTags(idx[k].lb || [], st);
+      const notesN = entryNotes(idx[k], st);
+      return { key: k, id: idx[k].id || k, v: idx[k], notes: notesN, labels, tags: unionTags(labels, notesN.flatMap((n) => n.tags)) };
+    });
   }
 
   function currentKey() {
@@ -370,12 +380,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const v = idx[k];
       if (k === id || v.id === id || (v.n || []).some((n) => n.id && mine.has(n.id))) delete idx[k];
     });
-    if (notes.length) {
+    if (notes.length || emailTags.length) {
       const last = notes.slice().sort((a, b) => b.updated - a.updated)[0];
       const e = {
         id, s: (subject || (ctx.meeting ? "(no title)" : "(no subject)")).slice(0, 100),
-        p: last.text.replace(/\s+/g, " ").slice(0, 80), c: notes.length,
-        u: Math.max.apply(null, notes.map((n) => n.updated || 0)),
+        p: last ? last.text.replace(/\s+/g, " ").slice(0, 80) : "", c: notes.length,
+        u: Math.max.apply(null, notes.map((n) => n.updated || 0).concat([lblAt || 0])),
         n: notes.map((n) => {
           const o = { id: n.id, text: n.text.slice(0, NOTE_TEXT_MAX), color: statusOf(n.color).hex,
             updated: n.updated, created: n.created };
@@ -386,6 +396,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           return o;
         }),
       };
+      if (emailTags.length) e.lb = emailTags.slice();
       if (ctx.compose) e.draft = 1;
       if (ctx.meeting) e.mt = 1;
       if (ctx.conv) e.cv = ctx.conv;
@@ -415,7 +426,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     editingId = null; composeId = null; showDone = false; replyCands = []; backupFound = null;
     openHist.clear();
     if (!item) {
-      ctx = null; notes = []; props = null; subject = "";
+      ctx = null; notes = []; emailTags = []; props = null; subject = "";
       resetComposer(); renderAll();
       return;
     }
@@ -436,6 +447,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!ok(res)) { toast("Couldn't load notes for this item"); return; }
       props = res.value;
       notes = decodeNotes(props.get(PROP_KEY));
+      emailTags = []; lblAt = 0;
+      try {
+        const lb = JSON.parse(props.get(LBL_KEY) || "null");
+        if (lb && Array.isArray(lb.t)) { emailTags = lb.t.filter((x) => typeof x === "string"); lblAt = lb.u || 0; }
+      } catch (e) { /* ignore */ }
       const changed = applyPending() | normaliseNoteTags();
       resetComposer();
       renderAll();
@@ -462,6 +478,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       return false;
     }
     if (notes.length) props.set(PROP_KEY, enc); else props.remove(PROP_KEY);
+    if (emailTags.length) props.set(LBL_KEY, lblValue()); else props.remove(LBL_KEY);
     props.saveAsync((res) => {
       if (!ok(res)) { toast("Couldn't save: " + ((res.error && res.error.message) || "unknown error")); return; }
       syncCategory();
@@ -537,7 +554,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const wanted = open.length ? [...new Set(open.map((n) => statusOf(n.color).name))]
       : notes.length ? [statusOf(DONE_HEX).name] : [];
     if (open.some((n) => n.due)) wanted.push(FOLLOW.name);
-    if (getTagStore().cats) [...new Set(notes.flatMap((n) => n.tags || []))].forEach((t) => wanted.push(TAG_PREFIX + t));
+    if (getTagStore().cats) unionTags(emailTags, notes.flatMap((n) => n.tags || [])).forEach((t) => wanted.push(TAG_PREFIX + t));
     const ours = new Set(ALL_CATS.map((l) => l.name).concat(OLD_NAMES));
     const isOurs = (n) => ours.has(n) || n.startsWith(TAG_PREFIX);
     item.categories.getAsync((r) => {
@@ -760,7 +777,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   function threadEntries() {
     if (!ctx || !ctx.conv) return [];
     const key = currentKey();
-    return allEntries().filter((e) => e.v.cv === ctx.conv && e.key !== key && e.id !== (ctx.item.itemId || ""));
+    return allEntries().filter((e) => e.notes.length && e.v.cv === ctx.conv && e.key !== key && e.id !== (ctx.item.itemId || ""));
   }
   function detectReply() {
     replyCands = [];
@@ -861,9 +878,18 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     (arr || []).forEach((t) => { const r = resolveTag(t, st); if (r && !out.some((x) => lc(x) === lc(r))) out.push(r); });
     return out;
   }
+  function unionTags(a, b) {
+    const out = [];
+    [].concat(a || [], b || []).forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); });
+    return out;
+  }
   function normaliseNoteTags() {
     const st = getTagStore();
     let changed = false;
+    if (emailTags.length) {
+      const t = normTags(emailTags, st);
+      if (JSON.stringify(t) !== JSON.stringify(emailTags)) { emailTags = t; changed = true; }
+    }
     notes.forEach((n) => {
       if (!n.tags || !n.tags.length) return;
       const t = normTags(n.tags, st);
@@ -887,8 +913,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   function allTagNames() {
     const st = getTagStore();
     const out = normTags(st.names, st);
-    allEntries().forEach((e) => e.notes.forEach((n) => n.tags.forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); })));
+    allEntries().forEach((e) => e.tags.forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); }));
     notes.forEach((n) => normTags(n.tags || [], st).forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); }));
+    normTags(emailTags, st).forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); });
     return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
   function tagPalette(name) {
@@ -925,27 +952,65 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const dl = $("tagOptions");
     dl.innerHTML = "";
     allTagNames().filter((t) => !draftTags.some((x) => lc(x) === lc(t))).forEach((t) => dl.appendChild(h("option", { value: t })));
-    const sug = $("tagSuggest");
+    renderEmailTags();
+  }
+
+  // ----- labels on the email itself -----
+  function renderEmailTags() {
+    const row = $("elRow");
+    row.hidden = !ctx;
+    if (!ctx) return;
+    const wrap = $("elChips");
+    wrap.innerHTML = "";
+    emailTags.forEach((t) => wrap.appendChild(tagChip(t, () => { switchTab("tag"); openTag(t); }, () => removeEmailTag(t))));
+    $("elInput").placeholder = emailTags.length ? "Add label" : "Label this " + (ctx.meeting ? "meeting" : "email");
+    const dl = $("elOptions");
+    dl.innerHTML = "";
+    allTagNames().filter((t) => !emailTags.some((x) => lc(x) === lc(t))).forEach((t) => dl.appendChild(h("option", { value: t })));
+    // suggestions from document numbers in the subject and file names
+    const sug = $("elSuggest");
     sug.innerHTML = "";
-    const src = (subject || "") + " " + (ctx ? ctx.attachments.join(" ") : "");
+    const src = (subject || "") + " " + ctx.attachments.join(" ");
     const live = $("sumPrefixes") && $("sumPrefixes").value.trim();
-    const refs = refsOf(src, parsePrefixes(live || (prefsCache || getPrefs()).prefixes)).filter((r) => !draftTags.some((x) => lc(x) === lc(r)));
-    refs.slice(0, 4).forEach((r) => sug.appendChild(h("button", { class: "tag-sug", title: "Add label " + r,
-      onclick: () => addTag(r) }, h("span", { html: svg("plus", 10) }), h("bdi", { text: r }))));
+    const refs = refsOf(src, parsePrefixes(live || (prefsCache || getPrefs()).prefixes)).filter((r) => !emailTags.some((x) => lc(x) === lc(r)));
+    refs.slice(0, 4).forEach((r) => sug.appendChild(h("button", { class: "tag-sug", title: "Label this email " + r,
+      onclick: () => addEmailTag(r) }, h("span", { html: svg("plus", 10) }), h("bdi", { text: r }))));
     sug.hidden = !refs.length;
   }
+  function changeEmailTags(fn, msg) {
+    if (!props) return;
+    const snap = emailTags.slice(), snapAt = lblAt;
+    fn();
+    lblAt = Date.now();
+    persist(msg, () => { emailTags = snap; lblAt = snapAt; });
+    renderEmailTags();
+    renderTagComposer();
+  }
+  function addEmailTag(raw) {
+    const t0 = cleanTag(raw);
+    if (!t0) return;
+    const t = allTagNames().find((x) => lc(x) === lc(t0)) || t0;
+    if (emailTags.some((x) => lc(x) === lc(t))) return;
+    registerTags([t]);
+    changeEmailTags(() => { emailTags.push(t); }, "Label added");
+  }
+  function removeEmailTag(t) { changeEmailTags(() => { emailTags = emailTags.filter((x) => x !== t); }, "Label removed"); }
+  function addEmailTagFromInput() { const v = $("elInput").value; $("elInput").value = ""; if (v.trim()) addEmailTag(v); }
 
   // ----- Labels tab -----
   function tagStats() {
     const map = new Map();
     allTagNames().forEach((t) => map.set(lc(t), { name: t, notes: 0, open: 0, late: 0, mails: new Set(), u: 0 }));
-    allEntries().forEach((e) => e.notes.forEach((n) => n.tags.forEach((t) => {
+    allEntries().forEach((e) => e.tags.forEach((t) => {
       const s = map.get(lc(t));
       if (!s) return;
-      s.notes++; s.mails.add(e.key); s.u = Math.max(s.u, n.updated || 0);
-      if (!isDone(n)) s.open++;
-      if (isLate(n)) s.late++;
-    })));
+      s.mails.add(e.key); s.u = Math.max(s.u, e.v.u || 0);
+      notesWithTag(e, t).forEach((n) => {
+        s.notes++;
+        if (!isDone(n)) s.open++;
+        if (isLate(n)) s.late++;
+      });
+    }));
     return [...map.values()];
   }
   function renderTags() {
@@ -973,11 +1038,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     });
   }
   function openTag(name) { openTagName = name; renderTags(); }
+  // notes that belong to a label: all notes if the email has the label, otherwise notes with it
+  function notesWithTag(e, name) {
+    return e.labels.some((t) => lc(t) === lc(name)) ? e.notes : e.notes.filter((n) => n.tags.some((t) => lc(t) === lc(name)));
+  }
   function tagRows(name) {
     const rows = [];
     allEntries().forEach((e) => {
-      const ns = e.notes.filter((n) => n.tags.some((t) => lc(t) === lc(name)));
-      if (ns.length) rows.push({ e, notes: ns });
+      if (!e.tags.some((t) => lc(t) === lc(name))) return;
+      rows.push({ e, notes: notesWithTag(e, name) });
     });
     rows.sort((a, b) => (b.notes.some((n) => !isDone(n)) - a.notes.some((n) => !isDone(n))) || b.e.v.u - a.e.v.u);
     return rows;
@@ -990,12 +1059,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const rows = tagRows(name);
     const total = rows.reduce((s, r) => s + r.notes.length, 0);
     const open = rows.reduce((s, r) => s + r.notes.filter((n) => !isDone(n)).length, 0);
-    $("tagStats").textContent = total
-      ? total + (total > 1 ? " notes" : " note") + " on " + rows.length + (rows.length > 1 ? " emails" : " email") + ", " + open + " open"
-      : "No notes with this label yet.";
+    $("tagStats").textContent = rows.length
+      ? pl(rows.length, "email") + ", " + pl(total, "note") + ", " + open + " open"
+      : "Nothing has this label yet.";
     $("tagAddHere").hidden = !ctx;
+    $("tagLabelHere").hidden = !ctx || emailTags.some((x) => lc(x) === lc(name));
+    $("tagLabelHere").textContent = "Add this label to the open " + (ctx && ctx.meeting ? "meeting" : "email");
     $("tagInsert").hidden = !(ctx && ctx.compose) || !open;
-    $("tagMail").hidden = !total;
+    $("tagMail").hidden = !rows.length;
     const box = $("tagMails");
     box.innerHTML = "";
     rows.forEach((r) => box.appendChild(mailBlock(r.e, r.notes)));
@@ -1005,6 +1076,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const block = h("div", { class: "mblock" },
       h("button", { class: "mblock-subj", title: "Open", onclick: () => openEmail(e.id) },
         ic(e.v.mt ? "cal" : e.v.draft ? "compose" : "mail", 14), h("bdi", { text: e.v.s })));
+    if (!list.length) block.appendChild(h("div", { class: "mnote-empty muted small", text: "Labeled, no notes" }));
     list.slice().sort((a, b) => isDone(a) - isDone(b) || b.updated - a.updated).forEach((n) => {
       const st = statusOf(n.color), ds = dueState(n);
       block.appendChild(h("div", { class: "mnote" + (isDone(n) ? " done" : ""), style: "--c:" + st.hex },
@@ -1076,7 +1148,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const rows = tagRows(name);
     const total = rows.reduce((s, r) => s + r.notes.length, 0);
     const open = rows.reduce((s, r) => s + r.notes.filter((n) => !isDone(n)).length, 0);
-    return pl(total, "note") + " on " + pl(rows.length, "email") + ", " + open + " open";
+    return pl(rows.length, "email") + ", " + pl(total, "note") + ", " + open + " open";
   }
 
   // ===================================================================
@@ -1213,7 +1285,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       g.sort((a, b) => (a.title === "No document number") - (b.title === "No document number") || a.title.localeCompare(b.title, undefined, { numeric: true }));
       groups.push(...g);
     } else if (prefs.group === "tag") {
-      const g = groupRows(rows, (r) => (r.n.tags.length ? r.n.tags.map((t) => TAG_PREFIX + t) : ["No label"]),
+      const g = groupRows(rows, (r) => { const tg = unionTags(r.e.labels, r.n.tags); return tg.length ? tg.map((t) => TAG_PREFIX + t) : ["No label"]; },
         (k) => (k === "No label" ? "#8a8378" : tagPalette(k.slice(TAG_PREFIX.length))[1]));
       g.sort((a, b) => (a.title === "No label") - (b.title === "No label") || a.title.localeCompare(b.title, undefined, { numeric: true }));
       groups.push(...g);
@@ -1364,7 +1436,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const n = r.n, st = dueState(n);
       switch (k) {
         case "ref": return refsOf(r.e.v.s + " " + n.text + " " + (n.att || ""), pre).join(", ");
-        case "labels": return n.tags.join(", ");
+        case "labels": return unionTags(r.e.labels, n.tags).join(", ");
         case "subject": return r.e.v.s;
         case "status": return statusOf(n.color).name.replace(/^\S+\s/, "");
         case "note": return n.text;
@@ -1624,7 +1696,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const list = $("index");
     list.innerHTML = "";
     const entries = allEntries()
-      .filter((e) => !q || lc(e.v.s + " " + e.notes.map((n) => n.text + " " + n.tags.join(" ") + " " + n.att).join(" ")).includes(q))
+      .filter((e) => !q || lc(e.v.s + " " + e.tags.join(" ") + " " + e.notes.map((n) => n.text + " " + n.att).join(" ")).includes(q))
       .filter((e) => {
         if (f === "open") return e.notes.some((n) => !isDone(n));
         if (f === "done") return e.notes.some(isDone);
@@ -1632,6 +1704,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         if (f === "late") return e.notes.some(isLate);
         if (f === "wait") return e.notes.some((n) => !isDone(n) && statusOf(n.color).hex === WAIT_HEX);
         if (f === "meet") return !!e.v.mt;
+        if (f === "tagged") return e.tags.length > 0;
         return true;
       })
       .sort((a, b) => {
@@ -1646,7 +1719,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const open = e.notes.filter((n) => !isDone(n));
       const fd = firstDue(e.notes);
       const latest = (open.length ? open : e.notes).slice().sort((x, y) => y.updated - x.updated)[0];
-      const tags = [...new Set(e.notes.flatMap((n) => n.tags))].slice(0, 3);
+      const tags = e.tags.slice(0, 3);
       const dots = [...new Set(e.notes.map((n) => statusOf(n.color).hex))];
       list.appendChild(h("li", null, h("button", { class: "row", title: "Open", onclick: () => openEmail(e.id) },
         h("div", { class: "row-top" },
@@ -1654,8 +1727,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           fd ? h("span", { class: "pill " + dueState(fd), text: dueText(fd) }) : null),
         h("div", { class: "row-sub" },
           h("span", { class: "dots" }, dots.map((c) => h("i", { style: "background:" + c }))),
-          h("span", { class: "muted", text: open.length + " open" + (e.notes.length > open.length ? ", " + (e.notes.length - open.length) + " done" : "") }),
-          h("bdi", { class: "row-prev", text: latest.text.replace(/\s+/g, " ").slice(0, 90) })),
+          h("span", { class: "muted", text: !e.notes.length ? "Labeled, no notes" : open.length + " open" + (e.notes.length > open.length ? ", " + (e.notes.length - open.length) + " done" : "") }),
+          latest ? h("bdi", { class: "row-prev", text: latest.text.replace(/\s+/g, " ").slice(0, 90) }) : null),
         tags.length ? h("div", { class: "row-tags" }, tags.map((t) => tagChip(t))) : null)));
     });
     const used = indexUsage();
@@ -1763,6 +1836,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagDelete").onclick = deleteTag;
     $("tagMail").onclick = emailLabel;
     $("tagInsert").onclick = insertLabel;
+    $("tagLabelHere").onclick = () => { addEmailTag(openTagName); renderTags(); };
+    const el = $("elInput");
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === "," || e.key === ";" || (e.key === "Tab" && el.value.trim())) { e.preventDefault(); addEmailTagFromInput(); }
+      else if (e.key === "Backspace" && !el.value && emailTags.length) removeEmailTag(emailTags[emailTags.length - 1]);
+    });
+    el.addEventListener("change", () => { if (allTagNames().some((t) => lc(t) === lc(el.value.trim()))) addEmailTagFromInput(); });
     $("tagAddHere").onclick = () => { const t = openTagName; switchTab("item"); resetComposer(); draftTags = [t]; renderTagComposer(); $("input").focus(); };
     $("tagCats").onchange = () => {
       const st = getTagStore(); st.cats = $("tagCats").checked; saveTagStore(st); syncCategory();
