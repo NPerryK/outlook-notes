@@ -10,9 +10,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "2.1.0";
+  const VERSION = "3.0.0";
   const PROP_KEY = "mailNotes";          // custom property on the item
   const LBL_KEY = "mailLabels";          // labels on the email itself (no note needed)
+  const DKEY_PROP = "mailNotesKey";      // key of a draft, so its notes can be reattached to the sent copy
+  const DRAFTS_KEY = "myNotesDrafts";    // roaming: notes written while composing, waiting for the sent copy
+  const HDR = "X-MyNotes-Key";           // hidden header that travels with the sent email
   const CP_LIMIT = 2400;                 // Outlook limit: 2,500 characters per add-in per item (measured in bytes to be safe)
   const IDX_KEY = "myNotesIdx2";         // compressed overview (roaming)
   const OLD_IDX_KEY = "mailNotesIndex";  // overview of versions 1.x
@@ -33,14 +36,21 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 
   // Status = note color = Outlook category in the message list
   const STATUS = [
-    { hex: "#e0b94a", name: "📝 Note",           short: "Note",     preset: "Preset3" },
-    { hex: "#d9534f", name: "🔴 Urgent",         short: "Urgent",   preset: "Preset0" },
-    { hex: "#4a9be0", name: "🔵 To Review",      short: "Review",   preset: "Preset7" },
-    { hex: "#a066d3", name: "🟣 Awaiting Reply", short: "Waiting",  preset: "Preset8" },
-    { hex: "#5cb85c", name: "🟢 Done",           short: "Done",     preset: "Preset4" },
+    { hex: "#e0b94a", name: "📝 Note",           short: "Note",     preset: "Preset3",  tip: "Something to do or follow" },
+    { hex: "#d9534f", name: "🔴 Urgent",         short: "Urgent",   preset: "Preset0",  tip: "Needs attention first" },
+    { hex: "#4a9be0", name: "🔵 To Review",      short: "Review",   preset: "Preset7",  tip: "Check a document or an answer" },
+    { hex: "#a066d3", name: "🟣 Awaiting Reply", short: "Waiting",  preset: "Preset8",  tip: "Waiting for someone to answer" },
+    { hex: "#5cb85c", name: "🟢 Done",           short: "Done",     preset: "Preset4",  tip: "Finished" },
+    { hex: "#8a94a0", name: "ℹ️ Info",           short: "Info",     preset: "Preset12", tip: "Just information, no action needed" },
   ];
   const NOTE_HEX = STATUS[0].hex, URGENT_HEX = STATUS[1].hex, REVIEW_HEX = STATUS[2].hex;
-  const WAIT_HEX = STATUS[3].hex, DONE_HEX = STATUS[4].hex;
+  const WAIT_HEX = STATUS[3].hex, DONE_HEX = STATUS[4].hex, INFO_HEX = STATUS[5].hex;
+  // Stages a label (e.g. a CDF) can be in
+  const STAGES = [
+    { id: "open", name: "Open", color: "#e0b94a" }, { id: "supplier", name: "With supplier", color: "#a066d3" },
+    { id: "stress", name: "With Stress", color: "#4a9be0" }, { id: "der", name: "DER review", color: "#d9822b" },
+    { id: "closed", name: "Closed", color: "#5cb85c" },
+  ];
   const FOLLOW = { name: "⏰ Follow-up", preset: "Preset1" };
   const ALL_CATS = STATUS.concat([FOLLOW]);
   const LEGACY = { "#e07a4a": URGENT_HEX };
@@ -48,6 +58,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   const statusOf = (hex) => STATUS.find((s) => s.hex === (LEGACY[hex] || hex)) || STATUS[0];
   const statusIdx = (hex) => STATUS.indexOf(statusOf(hex));
   const isDone = (n) => statusOf(n.color).hex === DONE_HEX;
+  const isInfo = (n) => statusOf(n.color).hex === INFO_HEX;
+  const isWait = (n) => statusOf(n.color).hex === WAIT_HEX;
+  const isOpen = (n) => !isDone(n) && !isInfo(n);
   const TAG_PALETTE = [
     ["Preset5", "#2a9d8f"], ["Preset9", "#b5306a"], ["Preset10", "#5b7fa6"], ["Preset6", "#8a8f2e"],
     ["Preset16", "#c8641c"], ["Preset19", "#2e7d32"], ["Preset22", "#2f4f9e"], ["Preset23", "#6b3fa0"],
@@ -55,7 +68,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   ];
   const DEFAULT_TEMPLATES = [
     { id: "t1", text: "Sent to Stress for review", color: REVIEW_HEX, days: 5, tags: [] },
-    { id: "t2", text: "Waiting for supplier answer", color: WAIT_HEX, days: 3, tags: [] },
+    { id: "t2", text: "Waiting for {from}", color: WAIT_HEX, days: 3, tags: [] },
     { id: "t3", text: "Needs DER approval", color: URGENT_HEX, days: 2, tags: [] },
     { id: "t4", text: "Check drawing / CDF update", color: NOTE_HEX, days: null, tags: [] },
   ];
@@ -84,6 +97,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   let backupFound = null;
   let openTagName = null;
   let tab = "item";
+  let draftKey = null;     // key of the open draft (compose mode)
+  let person = null;       // {name, first} – sender (read) or first recipient (compose)
   const openHist = new Set();
 
   const MB = () => Office.context.mailbox;
@@ -150,6 +165,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     send: '<path d="M2.5 7.5l11-5-4.5 11-2-4z"/><path d="M7 9.5l6.5-7"/>',
     list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><path d="M2.5 4h.1M2.5 8h.1M2.5 12h.1"/>',
     search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/>',
+    snooze: '<circle cx="6.5" cy="9.5" r="4.5"/><path d="M6.5 7v2.5l1.6 1.2"/><path d="M10 2.5h3.5L10 6h3.5"/>',
+    user: '<circle cx="8" cy="5.5" r="2.8"/><path d="M2.8 13.5a5.2 5.2 0 0110.4 0"/>',
+    kbd: '<rect x="2" y="4" width="12" height="8.5" rx="1.5"/><path d="M4.5 7h1M7.5 7h1M10.5 7h1M4.5 9.5h7"/>',
+    stage: '<path d="M2.5 3.5h11"/><path d="M2.5 8h7"/><path d="M2.5 12.5h4"/>',
+    text: '<path d="M3 4h10M3 7h10M3 10h6"/>',
   };
   function svg(name, size) {
     const s = size || 16;
@@ -181,8 +201,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   function nextSunday() { const d = new Date(startOfToday()); d.setDate(d.getDate() + ((7 - d.getDay()) % 7 || 7)); return d; }
   function weekStart() { const d = new Date(startOfToday()); d.setDate(d.getDate() - d.getDay()); return d.getTime(); }
+  function waitDays(n) { return workdaysBetween(n.since || n.created || n.updated || Date.now(), startOfToday()); }
   function dueState(n) {
-    if (!n.due || isDone(n)) return null;
+    if (!n.due || isDone(n) || isInfo(n)) return null;
     const t = dueTs(n.due), today = startOfToday();
     if (t < today) return "overdue";
     if (t === today) return "today";
@@ -218,6 +239,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (n.prev && isDone(n)) o.p = statusIdx(n.prev);
     if (t36(n.updated) !== o.cr) o.u = t36(n.updated);
     if (n.doneAt) o.dn = t36(n.doneAt);
+    if (n.since) o.w = t36(n.since);
     if (n.hist && n.hist.length) o.h = n.hist.map((x) => [x.t, t36(x.u)]);
     return o;
   }
@@ -227,7 +249,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       id: o.i || newId(), text: o.t || "", color: (STATUS[o.c] || STATUS[0]).hex,
       due: o.d || "", tags: o.g || [], att: o.a || "",
       prev: o.p != null && STATUS[o.p] ? STATUS[o.p].hex : undefined,
-      created: cr, updated: o.u ? f36(o.u) : cr, doneAt: o.dn ? f36(o.dn) : undefined,
+      created: cr, updated: o.u ? f36(o.u) : cr, doneAt: o.dn ? f36(o.dn) : undefined, since: o.w ? f36(o.w) : undefined,
       hist: (o.h || []).map((x) => ({ t: x[0], u: f36(x[1]) })),
     };
   }
@@ -297,7 +319,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const old = rsGet(OLD_IDX_KEY);
       if (old && typeof old === "object") { idx = old; idxCache = idx; setIndex(idx); } // migrate 1.x
     }
+    let stale = false;
+    Object.keys(idx).forEach((k) => { if (idx[k].draft && Date.now() - (idx[k].u || 0) > 21 * DAY) { delete idx[k]; stale = true; } });
     idxCache = idx;
+    if (stale) setIndex(idx);
     return idx;
   }
   const compressIdx = (idx) => "z" + LZString.compressToUTF16(JSON.stringify(idx));
@@ -349,7 +374,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       id: n.id, text: n.text != null ? n.text : n.t || "",
       color: statusOf(n.color || n.c || NOTE_HEX).hex,
       updated: n.updated || n.d || v.u, created: n.created || n.updated || n.d || v.u,
-      doneAt: n.doneAt, due: n.due || "", tags: normTags(n.tags || [], st), att: n.att || "",
+      doneAt: n.doneAt, since: n.since, due: n.due || "", tags: normTags(n.tags || [], st), att: n.att || "",
     }));
   }
   function allEntries() {
@@ -393,6 +418,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           if (n.tags && n.tags.length) o.tags = n.tags;
           if (n.att) o.att = n.att;
           if (n.doneAt) o.doneAt = n.doneAt;
+          if (n.since) o.since = n.since;
           return o;
         }),
       };
@@ -440,13 +466,20 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         ? item.attachments.filter((a) => !a.isInline && a.name).map((a) => a.name) : [],
     };
     subject = ctx.compose ? "" : item.subject || "";
+    person = null;
     if (ctx.compose) {
       item.subject.getAsync((r) => { subject = ok(r) ? r.value || "" : ""; renderHeader(); renderTagComposer(); });
+      try { item.to.getAsync((r) => { if (ok(r) && r.value && r.value.length) { person = personOf(r.value[0]); renderTagComposer(); } }); } catch (e) { /* not a message */ }
+    } else if (!meeting) {
+      const me = lc((MB().userProfile || {}).emailAddress || "");
+      const from = item.from || item.sender;
+      if (from && lc(from.emailAddress || "") !== me) person = personOf(from);
     }
     item.loadCustomPropertiesAsync((res) => {
       if (!ok(res)) { toast("Couldn't load notes for this item"); return; }
       props = res.value;
       notes = decodeNotes(props.get(PROP_KEY));
+      draftKey = ctx.compose ? props.get(DKEY_PROP) || null : null;
       emailTags = []; lblAt = 0;
       try {
         const lb = JSON.parse(props.get(LBL_KEY) || "null");
@@ -463,7 +496,67 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       detectReply();
       detectBackup();
       refreshBadges();
+      if (!ctx.compose && !ctx.meeting && !notes.length && !emailTags.length) recoverDraftNotes();
     });
+  }
+
+  // ----- notes written while composing: kept aside until the sent copy is opened -----
+  function getDrafts() { const d = rsGet(DRAFTS_KEY); return d && typeof d === "object" ? d : {}; }
+  function saveDraftStore() {
+    if (!ctx || !ctx.compose || ctx.meeting || !draftKey) return;
+    const d = getDrafts();
+    Object.keys(d).forEach((k) => { if (Date.now() - (d[k].at || 0) > 21 * DAY) delete d[k]; });
+    if (notes.length || emailTags.length) d[draftKey] = { s: subject, at: Date.now(), n: notes.map(toCompact), lb: emailTags.slice() };
+    else delete d[draftKey];
+    rsSet(DRAFTS_KEY, d);
+  }
+  function stampDraft() {
+    const ih = ctx.item.internetHeaders;
+    if (!ih || !ih.setAsync) return;
+    try { ih.setAsync({ [HDR]: draftKey }, () => {}); } catch (e) { /* not supported here */ }
+  }
+  const normSubject = (x) => lc(String(x || "")).replace(/^(\s*(re|fw|fwd|aw|wg|השב|הועבר)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  function recoverDraftNotes() {
+    const d = getDrafts();
+    const keys = Object.keys(d);
+    if (!keys.length) return;
+    const attach = (key, how) => {
+      const e = d[key];
+      notes = (e.n || []).map(fromCompact);
+      emailTags = (e.lb || []).slice();
+      lblAt = Date.now();
+      delete d[key];
+      rsSet(DRAFTS_KEY, d);
+      renderAll();
+      persist(how === "header" ? "Notes from your draft were attached" : "Notes from a draft with the same subject were attached");
+    };
+    const bySubject = () => {
+      const created = ctx.item.dateTimeCreated ? new Date(ctx.item.dateTimeCreated).getTime() : Date.now();
+      const me = lc((MB().userProfile || {}).emailAddress || "");
+      const from = ctx.item.from || ctx.item.sender;
+      if (!from || lc(from.emailAddress || "") !== me) return;
+      const k = keys.find((x) => normSubject(d[x].s) === normSubject(subject) && Math.abs(created - (d[x].at || 0)) < 3 * DAY);
+      if (k) attach(k, "subject");
+    };
+    const item = ctx.item;
+    if (item.getAllInternetHeadersAsync) {
+      try {
+        item.getAllInternetHeadersAsync((r) => {
+          const m = ok(r) && String(r.value || "").match(new RegExp("^" + HDR + ":\\s*(\\S+)", "im"));
+          if (m && d[m[1]]) attach(m[1], "header"); else bySubject();
+        });
+        return;
+      } catch (e) { /* fall through */ }
+    }
+    bySubject();
+  }
+  function personOf(x) {
+    let dn = String((x && x.displayName) || "").replace(/\(.*?\)/g, "").replace(/<.*?>/g, "").trim();
+    if (!dn && x && x.emailAddress) dn = String(x.emailAddress).split("@")[0].replace(/[._-]+/g, " ").replace(/\d+/g, "").trim().toUpperCase();
+    if (dn.includes(",")) { const p = dn.split(","); dn = (p[1] + " " + p[0]).replace(/\s+/g, " ").trim(); }
+    if (dn && dn === dn.toUpperCase() && /[A-Z]/.test(dn)) dn = dn.toLowerCase().replace(/(^|[\s-])\S/g, (c) => c.toUpperCase());
+    dn = dn.slice(0, TAG_MAX).trim();
+    return dn ? { name: dn, first: dn.split(" ")[0] } : null;
   }
 
   // Saves the notes; on "no space" the change is rolled back.
@@ -479,11 +572,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     }
     if (notes.length) props.set(PROP_KEY, enc); else props.remove(PROP_KEY);
     if (emailTags.length) props.set(LBL_KEY, lblValue()); else props.remove(LBL_KEY);
+    const stamp = ctx.compose && !ctx.meeting && (notes.length || emailTags.length) && !draftKey;
+    if (stamp) { draftKey = newId(); props.set(DKEY_PROP, draftKey); }
     props.saveAsync((res) => {
       if (!ok(res)) { toast("Couldn't save: " + ((res.error && res.error.message) || "unknown error")); return; }
       syncCategory();
-      const after = () => { updateIndex(); refreshBadges(); renderThread(); };
-      if (ctx.compose) saveDraft(after);
+      const after = () => { updateIndex(); refreshBadges(); renderThread(); if (tab === "today") renderToday(); };
+      if (ctx.compose) { if (stamp) stampDraft(); saveDraftStore(); saveDraft(after); }
       else { after(); updateBanner(); }
       if (msg) toast(msg);
     });
@@ -514,6 +609,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     notes.forEach((n) => {
       const p = pend[n.id];
       if (!p) return;
+      if (p.due !== undefined && !isDone(n) && n.due !== p.due) { n.due = p.due; n.updated = p.at; notesChanged = true; }
       if (p.done && !isDone(n)) {
         n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = p.at; n.updated = p.at; notesChanged = true;
       }
@@ -593,7 +689,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (!text) return;
     addTagFromInput();
     const now = Date.now();
-    const due = $("due").value || "";
+    const due = statusOf(color).hex === INFO_HEX ? "" : $("due").value || "";
     const tags = draftTags.slice();
     const att = $("attSel") && !$("attRow").hidden ? $("attSel").value : "";
     registerTags(tags);
@@ -608,15 +704,17 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         if (statusOf(color).hex !== statusOf(n.color).hex) {
           if (statusOf(color).hex === DONE_HEX && !wasDone) { n.prev = statusOf(n.color).hex; n.doneAt = now; }
           if (statusOf(color).hex !== DONE_HEX) { delete n.prev; delete n.doneAt; }
+          n.since = statusOf(color).hex === WAIT_HEX ? now : undefined;
           n.color = color;
         }
       } else {
         const n = { id: newId(), text, color, due, tags, att, created: now, updated: now, hist: [] };
         if (statusOf(color).hex === DONE_HEX) n.doneAt = now;
+        if (statusOf(color).hex === WAIT_HEX) n.since = now;
         notes.push(n);
       }
     }, wasEditing ? "Note updated" : "Note added");
-    if (saved) resetComposer();
+    if (saved) { resetComposer(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
   }
   function editNote(id) {
     const n = notes.find((x) => x.id === id);
@@ -639,7 +737,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     mutate(() => {
       const n = notes.find((x) => x.id === id);
       if (!n) return;
-      if (isDone(n)) { n.color = n.prev && n.prev !== DONE_HEX ? n.prev : NOTE_HEX; delete n.prev; delete n.doneAt; }
+      if (isDone(n)) { n.color = n.prev && n.prev !== DONE_HEX ? n.prev : NOTE_HEX; delete n.prev; delete n.doneAt; if (isWait(n)) n.since = Date.now(); }
       else { n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = Date.now(); }
       n.updated = Date.now();
     }, notes.find((x) => x.id === id && isDone(x)) ? "Note reopened" : "Marked as done");
@@ -677,10 +775,23 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("composer").classList.remove("editing");
     updateComposerState();
   }
+  // Inserts "05/11/2026 - " at the cursor (Alt+D)
+  function insertToday() {
+    const ta = $("input");
+    const d = new Date();
+    let ins = pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + d.getFullYear() + " - ";
+    const start = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+    const end = ta.selectionEnd != null ? ta.selectionEnd : start;
+    if (start > 0 && !/\s$/.test(ta.value.slice(0, start))) ins = " " + ins;
+    ta.setRangeText(ins, start, end, "end");
+    ta.focus();
+    updateComposerState();
+  }
   function updateComposerState() {
     const has = !!$("input").value.trim();
     $("save").disabled = !has || !ctx;
     $("tplSave").hidden = !has;
+    $("composer").classList.toggle("open", has || !!editingId);
     document.querySelectorAll("#dueChips button").forEach((b) => b.setAttribute("aria-pressed", "false"));
   }
 
@@ -688,13 +799,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   function buildStatusPicker() {
     const wrap = $("statusPick");
     STATUS.forEach((s) => {
-      wrap.appendChild(h("button", { class: "st", "data-hex": s.hex, title: s.name.replace(/^\S+\s/, ""),
+      wrap.appendChild(h("button", { class: "st", "data-hex": s.hex, title: s.name.replace(/^\S+\s/, "") + " – " + s.tip + " (Alt+" + (STATUS.indexOf(s) + 1) + ")",
         style: "--c:" + s.hex, "aria-pressed": "false", onclick: () => setColor(s.hex) }, h("i", { style: "background:" + s.hex }), h("span", { text: s.short })));
     });
   }
   function setColor(c) {
     color = statusOf(c).hex;
     document.querySelectorAll("#statusPick .st").forEach((b) => b.setAttribute("aria-pressed", b.dataset.hex === color ? "true" : "false"));
+    $("dueRow").classList.toggle("off", color === INFO_HEX);
+    $("dueRow").title = color === INFO_HEX ? "Info notes have no due date" : "";
   }
 
   // ----- due date shortcuts -----
@@ -724,9 +837,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   function getTemplates() { const t = rsGet(TPL_KEY); return Array.isArray(t) ? t : DEFAULT_TEMPLATES.map((x) => Object.assign({}, x)); }
   function setTemplates(t) { rsSet(TPL_KEY, t); }
+  const fillFrom = (text) => String(text).replace(/\{from\}/gi, person ? person.first : "…");
   function applyTemplate(t) {
     if (editingId) resetComposer();
-    $("input").value = t.text;
+    $("input").value = fillFrom(t.text);
     setColor(t.color);
     $("due").value = t.days != null ? iso(addWorkdays(startOfToday(), t.days)) : "";
     (t.tags || []).forEach((x) => { if (!draftTags.some((y) => lc(y) === lc(x))) draftTags.push(x); });
@@ -754,10 +868,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     row.innerHTML = "";
     list.forEach((t) => {
       const st = statusOf(t.color);
-      row.appendChild(h("button", { class: "quick", title: t.text + (t.days != null ? " (due in " + t.days + " workdays)" : ""),
-        onclick: () => applyTemplate(t) }, h("i", { style: "background:" + st.hex }), h("bdi", { text: t.text })));
+      row.appendChild(h("button", { class: "quick", style: "--c:" + st.hex, title: t.text + (t.days != null ? " (due in " + t.days + " workdays)" : ""),
+        onclick: () => applyTemplate(t) }, h("bdi", { text: fillFrom(t.text) })));
     });
-    $("quickWrap").hidden = !ctx;
+    $("quickWrap").hidden = !ctx || !list.length;
+    requestAnimationFrame(() => row.classList.toggle("fade", row.scrollWidth > row.clientWidth + 2));
     const panel = $("tplList");
     panel.innerHTML = "";
     if (!list.length) panel.appendChild(h("li", { class: "muted small", text: "No quick notes yet." }));
@@ -795,17 +910,65 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderReply();
   }
   function markRemoteDone(c) {
-    const idx = getIndex();
-    const v = idx[c.e.key];
-    const now = Date.now();
-    if (v && v.n) v.n.forEach((n) => { if (n.id === c.n.id) { n.prev = n.color; n.color = DONE_HEX; n.doneAt = now; n.updated = now; } });
-    setIndex(idx);
-    const pend = rsGet(PEND_KEY) || {};
-    pend[c.n.id] = { done: 1, at: now };
-    rsSet(PEND_KEY, pend);
     replyCands = replyCands.filter((x) => x !== c);
+    remoteUpdate(c.e, c.n.id, { done: 1 }, "Marked as done");
+  }
+  // Change a note on any email. The open email is changed directly; others get the change
+  // in the overview now and on the email itself the next time it is opened.
+  function remoteUpdate(e, noteId, patch, msg) {
+    const now = Date.now();
+    const apply = (n) => {
+      if (patch.due !== undefined) n.due = patch.due;
+      if (patch.done) { n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = now; }
+      n.updated = now;
+    };
+    if (ctx && e.key === currentKey()) {
+      mutate(() => { const n = notes.find((x) => x.id === noteId); if (n) apply(n); }, msg);
+    } else {
+      const idx = getIndex();
+      const v = idx[e.key];
+      if (v && v.n) { v.n.forEach((n) => { if (n.id === noteId) apply(n); }); v.u = now; setIndex(idx); }
+      const pend = rsGet(PEND_KEY) || {};
+      pend[noteId] = Object.assign({}, pend[noteId] || {}, patch, { at: now });
+      rsSet(PEND_KEY, pend);
+      toast(msg);
+    }
     renderReply(); renderThread(); refreshBadges();
-    toast("Marked as done");
+    if (tab === "today") renderToday();
+    if (tab === "all") renderIndex();
+    if (tab === "tag") renderTags();
+  }
+
+  // ----- snooze: a small menu of new due dates -----
+  function snoozeMenu(anchor, current, onPick) {
+    const t = startOfToday();
+    const items = [
+      ["Today", iso(new Date(t))], ["Next workday", iso(addWorkdays(t, 1))], ["In 3 workdays", iso(addWorkdays(t, 3))],
+      ["In 5 workdays", iso(addWorkdays(t, 5))], ["Next Sunday", iso(nextSunday())],
+    ];
+    popover(anchor, items.map(([label, v]) => ({ label, hint: fmtShort(dueTs(v)), active: v === current, onClick: () => onPick(v) }))
+      .concat(current ? [{ label: "Remove due date", danger: true, onClick: () => onPick("") }] : []));
+  }
+  let popEl = null;
+  function closePopover() { if (popEl) { popEl.remove(); popEl = null; document.removeEventListener("mousedown", onPopDown, true); } }
+  function onPopDown(e) { if (popEl && !popEl.contains(e.target)) closePopover(); }
+  function popover(anchor, items) {
+    closePopover();
+    const pop = h("div", { class: "pop", role: "menu" });
+    items.forEach((it) => pop.appendChild(h("button", { class: "pop-item" + (it.active ? " active" : "") + (it.danger ? " danger" : ""), role: "menuitem",
+      onclick: () => { closePopover(); it.onClick(); } }, h("span", { text: it.label }), it.hint ? h("span", { class: "pop-hint", text: it.hint }) : null)));
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect();
+    const w = pop.offsetWidth, hgt = pop.offsetHeight;
+    let left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+    let top = r.bottom + 4;
+    if (top + hgt > window.innerHeight - 8) top = Math.max(8, r.top - hgt - 4);
+    pop.style.left = left + window.scrollX + "px";
+    pop.style.top = top + window.scrollY + "px";
+    popEl = pop;
+    setTimeout(() => document.addEventListener("mousedown", onPopDown, true), 0);
+    const first = pop.querySelector("button");
+    if (first) first.focus();
   }
   function dismissReply() {
     const dism = (rsGet(DISM_KEY) || []).concat(replyCands.map((c) => c.n.id)).slice(-200);
@@ -859,7 +1022,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   function getTagStore() {
     const st = rsGet(TAGS_KEY);
-    return Object.assign({ names: [], renamed: {}, removed: [], cats: true }, st || {});
+    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, stages: {}, byStage: false }, st || {});
+  }
+  const stageOf = (name, st) => { const k = Object.keys((st || getTagStore()).stages).find((x) => lc(x) === lc(name)); return k ? STAGES.find((g) => g.id === (st || getTagStore()).stages[k]) || null : null; };
+  function setStage(name, id) {
+    const st = getTagStore();
+    Object.keys(st.stages).forEach((k) => { if (lc(k) === lc(name)) delete st.stages[k]; });
+    if (id) st.stages[name] = id;
+    saveTagStore(st);
   }
   function saveTagStore(st) { rsSet(TAGS_KEY, st); }
   function cleanTag(s) { return String(s || "").replace(/[,;]/g, " ").replace(/\s+/g, " ").trim().slice(0, TAG_MAX); }
@@ -975,7 +1145,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const refs = refsOf(src, parsePrefixes(live || (prefsCache || getPrefs()).prefixes)).filter((r) => !emailTags.some((x) => lc(x) === lc(r)));
     refs.slice(0, 4).forEach((r) => sug.appendChild(h("button", { class: "tag-sug", title: "Label this email " + r,
       onclick: () => addEmailTag(r) }, h("span", { html: svg("plus", 10) }), h("bdi", { text: r }))));
-    sug.hidden = !refs.length;
+    if (person && !emailTags.some((x) => lc(x) === lc(person.name))) {
+      sug.appendChild(h("button", { class: "tag-sug person", title: "Label this email with the " + (ctx.compose ? "recipient" : "sender") + "'s name, to see everything open with " + person.first,
+        onclick: () => addEmailTag(person.name) }, h("span", { html: svg("user", 10) }), h("bdi", { text: person.name })));
+    }
+    sug.hidden = !sug.childElementCount;
   }
   function changeEmailTags(fn, msg) {
     if (!props) return;
@@ -1018,24 +1192,53 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagListView").hidden = detail;
     $("tagDetail").hidden = !detail;
     if (detail) return renderTagDetail();
-    $("tagCats").checked = getTagStore().cats;
+    const st = getTagStore();
+    $("tagCats").checked = st.cats;
+    $("tagByStage").checked = st.byStage;
     const q = lc($("tagSearch").value.trim());
     const list = $("tagList");
     list.innerHTML = "";
     const stats = tagStats().filter((s) => !q || lc(s.name).includes(q))
       .sort((a, b) => b.late - a.late || b.open - a.open || b.u - a.u || a.name.localeCompare(b.name));
+    stats.forEach((s) => { s.stage = stageOf(s.name, st); });
+    renderStageBar(tagStats().map((s) => stageOf(s.name, st)));
     if (!stats.length) {
       list.appendChild(emptyState(q ? "No labels match your search." : "No labels yet",
         q ? "" : "Labels link notes from different emails. Add one in the label field when you write a note, or create one here."));
       return;
     }
-    stats.forEach((s) => {
-      list.appendChild(h("li", null, h("button", { class: "row", onclick: () => openTag(s.name) },
-        h("div", { class: "row-top" }, tagChip(s.name), s.late ? h("span", { class: "pill overdue", text: s.late + " late" }) : null),
-        h("div", { class: "row-sub" }, s.notes
-          ? s.notes + (s.notes > 1 ? " notes" : " note") + " on " + s.mails.size + (s.mails.size > 1 ? " emails" : " email") + ", " + s.open + " open"
-          : "No notes yet"))));
+    const rowEl = (s) => h("li", null, h("button", { class: "row", onclick: () => openTag(s.name) },
+      h("div", { class: "row-top" }, tagChip(s.name),
+        s.late ? h("span", { class: "pill overdue", text: s.late + " late" }) : (!st.byStage && s.stage) ? h("span", { class: "stage-tag", style: "--c:" + s.stage.color, text: s.stage.name }) : null),
+      h("div", { class: "row-sub" }, s.notes
+        ? pl(s.notes, "note") + " on " + pl(s.mails.size, "email") + ", " + s.open + " open"
+        : "No notes yet")));
+    if (!st.byStage) { stats.forEach((s) => list.appendChild(rowEl(s))); return; }
+    const groups = STAGES.map((g) => ({ g, items: stats.filter((s) => s.stage && s.stage.id === g.id) }))
+      .concat([{ g: { id: "", name: "No stage", color: "#8a94a0" }, items: stats.filter((s) => !s.stage) }]);
+    groups.forEach(({ g, items }) => {
+      if (!items.length) return;
+      const closed = g.id === "closed";
+      const head = h("li", { class: "stage-head" + (closed ? " closed" : ""), style: "--c:" + g.color },
+        h("button", { class: "sec-toggle", "aria-expanded": !closed, onclick: (ev) => {
+          const open = ev.currentTarget.getAttribute("aria-expanded") !== "true";
+          ev.currentTarget.setAttribute("aria-expanded", open);
+          let el = ev.currentTarget.parentElement.nextElementSibling;
+          while (el && !el.classList.contains("stage-head")) { el.hidden = !open; el = el.nextElementSibling; }
+        }, html: svg(closed ? "chevR" : "chevD", 13) + "<i class=\"dot\" style=\"background:" + g.color + "\"></i><span>" + esc(g.name) + "</span><span class=\"today-n\">" + items.length + "</span>" }));
+      list.appendChild(head);
+      items.forEach((s) => { const li = rowEl(s); li.hidden = closed; list.appendChild(li); });
     });
+  }
+  function renderStageBar(stageList) {
+    const bar = $("stageBar");
+    bar.innerHTML = "";
+    const counts = STAGES.map((g) => ({ g, n: stageList.filter((x) => x && x.id === g.id).length }));
+    const total = counts.reduce((a, c) => a + c.n, 0);
+    bar.hidden = !total;
+    if (!total) return;
+    counts.filter((c) => c.n).forEach((c) => bar.appendChild(h("div", { class: "stage-seg", style: "--c:" + c.g.color + ";flex:" + c.n, title: c.n + " × " + c.g.name },
+      h("b", { text: c.n }), h("span", { text: c.g.name }))));
   }
   function openTag(name) { openTagName = name; renderTags(); }
   // notes that belong to a label: all notes if the email has the label, otherwise notes with it
@@ -1062,9 +1265,16 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagStats").textContent = rows.length
       ? pl(rows.length, "email") + ", " + pl(total, "note") + ", " + open + " open"
       : "Nothing has this label yet.";
+    const cur = stageOf(name);
+    const sp = $("stagePick");
+    sp.innerHTML = "";
+    STAGES.forEach((g) => sp.appendChild(h("button", { class: "st", style: "--c:" + g.color, "aria-pressed": cur && cur.id === g.id ? "true" : "false",
+      title: cur && cur.id === g.id ? "Click to clear the stage" : "Set stage: " + g.name,
+      onclick: () => { setStage(name, cur && cur.id === g.id ? "" : g.id); renderTags(); toast(cur && cur.id === g.id ? "Stage cleared" : "Stage: " + g.name); } },
+      h("i", { style: "background:" + g.color }), h("span", { text: g.name }))));
     $("tagAddHere").hidden = !ctx;
     $("tagLabelHere").hidden = !ctx || emailTags.some((x) => lc(x) === lc(name));
-    $("tagLabelHere").textContent = "Add this label to the open " + (ctx && ctx.meeting ? "meeting" : "email");
+    $("tagLabelHere").textContent = "Label this " + (ctx && ctx.meeting ? "meeting" : "email");
     $("tagInsert").hidden = !(ctx && ctx.compose) || !open;
     $("tagMail").hidden = !rows.length;
     const box = $("tagMails");
@@ -1082,7 +1292,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       block.appendChild(h("div", { class: "mnote" + (isDone(n) ? " done" : ""), style: "--c:" + st.hex },
         h("div", { class: "note-text", dir: "auto", text: n.text }),
         h("div", { class: "mnote-meta" }, h("span", { class: "st-mini" }, h("i", { style: "background:" + st.hex }), st.short),
-          h("span", { class: "muted", text: fmtShort(n.updated) }), ds ? h("span", { class: "pill " + ds, text: dueText(n) }) : null)));
+          h("span", { class: "muted", text: fmtShort(n.updated) }), ds ? h("span", { class: "pill " + ds, text: dueText(n) }) : null, waitChip(n))));
     });
     return block;
   }
@@ -1104,6 +1314,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     st.renamed[old] = t;
     st.removed = st.removed.filter((r) => lc(r) !== lc(t));
     st.names = st.names.filter((x) => lc(x) !== lc(old) && lc(x) !== lc(t)).concat([t]);
+    const sg = st.stages[old]; if (sg) { delete st.stages[old]; st.stages[t] = sg; }
     saveTagStore(st);
     applyTagChangeHere("Label renamed");
     openTag(t);
@@ -1115,6 +1326,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (!yes) return;
     const st = getTagStore();
     st.removed.push(name);
+    delete st.stages[name];
     st.names = st.names.filter((x) => lc(x) !== lc(name));
     Object.keys(st.renamed).forEach((k) => { if (lc(k) === lc(name)) delete st.renamed[k]; });
     saveTagStore(st);
@@ -1134,7 +1346,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   function emailLabel() {
     const name = openTagName;
-    const out = renderMailHtml({ title: "Notes on " + name, subtitle: tagStatsLine(name), groups: labelGroups(name), maxText: NOTE_TEXT_MAX, showStatus: true });
+    const sg = stageOf(name);
+    const out = renderMailHtml({ title: "Notes on " + name, subtitle: (sg ? "Stage: " + sg.name + " · " : "") + tagStatsLine(name), groups: labelGroups(name), maxText: NOTE_TEXT_MAX, showStatus: true });
     try { MB().displayNewMessageForm({ subject: "Notes – " + name, htmlBody: out.html }); }
     catch (e) { toast("Couldn't open a new email"); }
   }
@@ -1177,7 +1390,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const d = {
       labels: STATUS.filter((s) => s.hex !== DONE_HEX).map((s) => s.hex), range: "all", group: "label",
       prefixes: "CDF", dueTop: true, to: (MB().userProfile || {}).emailAddress || "",
-      cols: EXCEL_COLS.map((c) => ({ k: c[0], on: c[0] !== "created" })), header: true, onlyChanged: false, lastCopy: 0,
+      cols: EXCEL_COLS.map((c) => ({ k: c[0], on: c[0] !== "created" })), header: true, onlyChanged: false, lastCopy: 0, waitAlert: 3,
     };
     const out = Object.assign(d, p || {});
     // keep column list complete if new columns were added
@@ -1194,6 +1407,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       range: $("sumRange").value, group: $("sumGroup").value, prefixes: $("sumPrefixes").value.trim(),
       dueTop: $("sumDueTop").checked, to: $("sumTo").value.trim(),
       header: $("xlHeader").checked, onlyChanged: $("xlChanged").checked,
+      waitAlert: (() => { const n = parseInt($("waitAlert").value, 10); return isNaN(n) ? 3 : Math.min(30, Math.max(1, n)); })(),
     });
   }
   function savePrefs(p) { prefsCache = p || readPrefs(); rsSet(PREFS_KEY, prefsCache); return prefsCache; }
@@ -1219,7 +1433,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("sumTo").addEventListener("change", () => savePrefs());
     $("xlHeader").addEventListener("change", () => savePrefs());
     $("sumGo").onclick = createSummary;
+    $("sumText").onclick = copySummaryText;
     $("sumCopy").onclick = copyForExcel;
+    $("waitAlert").value = prefs.waitAlert;
+    $("waitAlert").addEventListener("change", () => { savePrefs(); renderAll(); });
     $("weekGo").onclick = createWeekly;
     $("backupGo").onclick = createBackup;
     renderColumns();
@@ -1376,9 +1593,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     let open = 0, late = 0, wait = 0, doneWeek = 0;
     const ws = weekStart();
     all.forEach((e) => e.notes.forEach((n) => {
-      if (!isDone(n)) open++;
+      if (isOpen(n)) open++;
       if (isLate(n)) late++;
-      if (!isDone(n) && statusOf(n.color).hex === WAIT_HEX) wait++;
+      if (isWait(n) && !isDone(n)) wait++;
       if (isDone(n) && (n.doneAt || 0) >= ws) doneWeek++;
     }));
     $("stOpen").textContent = open; $("stLate").textContent = late; $("stWait").textContent = wait; $("stDone").textContent = doneWeek;
@@ -1394,6 +1611,42 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     let out = renderMailHtml(o);
     if (out.skipped) out = renderMailHtml(Object.assign(o, { maxText: 120 }));
     sendNew("My Notes summary " + fmtDay(Date.now()), out.html, prefs.to);
+  }
+  // Plain text for Teams / chat
+  function summaryText(groups, title, subtitle) {
+    const lines = [title, subtitle, ""];
+    groups.forEach((g) => {
+      if (!g.mails.length) return;
+      lines.push(g.title + " (" + g.mails.length + ")");
+      g.mails.forEach((m) => {
+        lines.push("• " + m.e.v.s);
+        m.notes.forEach((n) => {
+          const st = statusOf(n.color), ds = dueState(n);
+          const extra = [st.short].concat(ds ? [dueText(n)] : [], isDone(n) ? ["done"] : [], isWait(n) && !isDone(n) ? ["waiting " + waitDays(n) + " wd"] : []);
+          lines.push("   – " + n.text.replace(/\s+/g, " ") + "  [" + extra.join(", ") + "]");
+        });
+      });
+      lines.push("");
+    });
+    return lines.join("\n").trim();
+  }
+  function copySummaryText() {
+    const prefs = savePrefs();
+    const groups = buildGroups(prefs);
+    if (!groups.length) return toast("Nothing to copy");
+    const c = countRows(selectedNotes(prefs));
+    const text = summaryText(groups, "My Notes summary – " + fmtDay(Date.now()), pl(c.notes, "note") + " on " + pl(c.mails, "email") + ", " + $("sumRange").selectedOptions[0].textContent.toLowerCase());
+    copyPlain(text).then((done) => {
+      if (done) { $("copyBox").hidden = true; toast("Summary copied as text. Paste it into Teams."); }
+      else { const box = $("copyBox"); box.hidden = false; box.value = text; box.focus(); box.select(); toast("Press Ctrl+C to copy"); }
+    });
+  }
+  async function copyPlain(text) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (e) { /* fall through */ }
+    try {
+      const ta = h("textarea", { style: "position:fixed;left:-9999px;top:0" }); ta.value = text;
+      document.body.appendChild(ta); ta.select(); const done = document.execCommand("copy"); ta.remove(); return done;
+    } catch (e) { return false; }
   }
   function sendNew(subj, html, to) {
     const opts = { subject: subj, htmlBody: html };
@@ -1444,7 +1697,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         case "created": return fmtXl(n.created || n.updated);
         case "updated": return fmtXl(n.updated);
         case "due": return n.due ? fmtDueLong(n.due) : "";
-        case "state": return isDone(n) ? "Done" : st === "overdue" ? "Overdue" : st === "today" ? "Due today" : "Open";
+        case "state": return isDone(n) ? "Done" : isInfo(n) ? "Info" : st === "overdue" ? "Overdue" : st === "today" ? "Due today" : "Open";
         case "link": return messageLink(r.e.id);
         default: return "";
       }
@@ -1557,6 +1810,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderBackup();
     renderActions();
     refreshBadges();
+    if (tab === "today") renderToday();
     if (tab === "all") renderIndex();
     if (tab === "tag") renderTags();
     if (tab === "sum") renderSummaryInfo();
@@ -1566,18 +1820,33 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tbIcon").innerHTML = svg(kind, 15);
     $("subject").textContent = !ctx ? "Select an email to see its notes" : subject || (ctx.meeting ? "(no title)" : ctx.compose ? "(new email)" : "(no subject)");
     $("subject").setAttribute("dir", "auto");
-    const open = notes.filter((n) => !isDone(n)).length, done = notes.length - open;
-    $("tbNotes").textContent = !notes.length ? "None" : open + " open" + (done ? ", " + done + " done" : "");
+    const open = notes.filter(isOpen).length, info = notes.filter(isInfo).length, done = notes.filter(isDone).length;
+    const parts = [];
+    if (open) parts.push(open + " open");
+    if (info) parts.push(info + " info");
+    if (done) parts.push(done + " done");
+    $("tbNotes").textContent = !notes.length ? "None" : parts.join(", ");
+    $("tabItemName").textContent = !ctx ? "Email" : ctx.meeting ? "Meeting" : ctx.compose ? "Draft" : "Email";
+    // next due on this item
+    const nd = notes.filter((n) => dueState(n)).sort((a, b) => dueTs(a.due) - dueTs(b.due))[0];
+    const dv = $("tbDue");
+    dv.className = "tb-v" + (nd ? " " + dueState(nd) : "");
+    dv.textContent = !nd ? "–" : dueState(nd) === "today" ? "Today" : dueState(nd) === "overdue" ? dueText(nd) : fmtShort(dueTs(nd.due));
     const th = threadEntries();
     const thN = th.reduce((s, e) => s + e.notes.length, 0);
-    $("tbThread").textContent = !ctx || !ctx.conv ? "–" : thN ? thN + " on " + th.length + " other" : "No other notes";
+    $("tbThread").textContent = !ctx || !ctx.conv ? "–" : thN ? pl(thN, "note") : "None";
+    $("tbThreadCell").title = thN ? pl(thN, "note") + " on " + pl(th.length, "other email") + " in this conversation. Click to show."
+      : "Notes on other emails in this conversation";
     $("tbThreadCell").classList.toggle("link", !!thN);
     const used = spaceUsed();
     const pct = Math.round(used * 100);
     $("tbSpace").style.width = Math.min(100, pct) + "%";
-    $("tbSpaceCell").classList.toggle("warn", used > 0.8);
+    $("tbSpaceCell").classList.toggle("warn", used > 0.7 && used <= 0.9);
+    $("tbSpaceCell").classList.toggle("full", used > 0.9);
     $("tbSpacePct").textContent = pct + "%";
-    $("tbSpaceCell").title = "Outlook keeps about 2,500 characters of notes per email. " + pct + "% used.";
+    $("tbSpaceCell").title = "Note space on this email: " + pct + "% of about 2,500 characters.";
+    $("spaceNote").hidden = used <= 0.7;
+    $("spaceNote").textContent = pct + "% of note space used";
   }
   function renderNotes() {
     const open = notes.filter((n) => !isDone(n));
@@ -1588,7 +1857,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     ul.innerHTML = "";
     if (ctx && !notes.length) ul.appendChild(emptyState("No notes on this email yet", "Write one above, or pick a quick note."));
     else if (ctx && !open.length) ul.appendChild(emptyState("Everything here is done", "Done notes are below. Delete them when you no longer need them.", "check"));
-    open.sort((a, b) => (a.due ? dueTs(a.due) : 9e15) - (b.due ? dueTs(b.due) : 9e15) || b.updated - a.updated)
+    open.sort((a, b) => isInfo(a) - isInfo(b) || (a.due ? dueTs(a.due) : 9e15) - (b.due ? dueTs(b.due) : 9e15) || b.updated - a.updated)
       .forEach((n) => ul.appendChild(noteEl(n)));
     $("doneWrap").hidden = !done.length;
     const dl = $("doneNotes");
@@ -1609,17 +1878,20 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const li = h("li", { class: "note" + (done ? " done" : "") + (editingId === n.id ? " is-editing" : ""), style: "--c:" + st.hex });
     li.appendChild(h("div", { class: "note-head" },
       h("span", { class: "st-pill" }, h("i", { style: "background:" + st.hex }), st.short),
-      ds ? h("span", { class: "pill " + ds, html: svg("clock", 11) + "<span>" + esc(dueText(n)) + "</span>" }) : null,
-      n.att ? h("span", { class: "att", title: n.att, html: svg("clip", 11) + "<bdi>" + esc(n.att) + "</bdi>" }) : null));
+      ds ? h("span", { class: "due " + ds, html: svg("clock", 11) + "<span>" + esc(dueText(n)) + "</span>" }) : null,
+      waitChip(n)));
     li.appendChild(h("div", { class: "note-text", dir: "auto", text: n.text }));
     if (n.tags && n.tags.length) li.appendChild(h("div", { class: "note-tags" }, n.tags.map((t) => tagChip(t, () => { switchTab("tag"); openTag(t); }))));
     const actions = h("div", { class: "note-actions" },
-      iconBtn(done ? "undo" : "check", done ? "Reopen" : "Mark as done", () => toggleDone(n.id), done ? "" : "ok"),
+      isInfo(n) ? null : iconBtn(done ? "undo" : "check", done ? "Reopen" : "Mark as done", () => toggleDone(n.id), done ? "" : "ok"),
+      !done && !isInfo(n) ? iconBtn("snooze", n.due ? "Move the due date" : "Set a due date", (ev) => snoozeMenu(ev.currentTarget, n.due,
+        (v) => mutate(() => { const x = notes.find((y) => y.id === n.id); if (x) { x.due = v; x.updated = Date.now(); } }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed"))) : null,
       n.due && !done ? iconBtn("cal", "Add a reminder to my calendar", () => addToCalendar(n)) : null,
       iconBtn("edit", "Edit", () => editNote(n.id)),
       iconBtn("trash", "Delete", () => deleteNote(n.id), "danger"));
     const foot = h("div", { class: "note-foot" },
       h("span", { class: "muted", text: (edited ? "Edited " : "") + fmtDate(n.updated) }),
+      n.att ? h("span", { class: "att", title: n.att, html: svg("clip", 11) + "<bdi>" + esc(n.att) + "</bdi>" }) : null,
       n.hist && n.hist.length ? h("button", { class: "linkbtn small", "aria-expanded": openHist.has(n.id),
         title: "Earlier versions of this note", html: svg("history", 12) + "<span>History (" + n.hist.length + ")</span>",
         onclick: () => { openHist.has(n.id) ? openHist.delete(n.id) : openHist.add(n.id); renderNotes(); } }) : null,
@@ -1631,6 +1903,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     }
     return li;
   }
+  function waitChip(n) {
+    if (!isWait(n) || isDone(n)) return null;
+    const d = waitDays(n), lim = waitAlertDays();
+    return h("span", { class: "wait" + (d >= lim ? " long" : ""), title: d + " workdays since this was marked as awaiting reply" + (d >= lim ? ". Longer than your " + lim + "-workday limit." : ""),
+      html: svg("reply", 11) + "<span>" + (d ? "Waiting " + d + " wd" : "Waiting since today") + "</span>" });
+  }
+  function waitAlertDays() { const v = parseInt((prefsCache || getPrefs()).waitAlert, 10); return isNaN(v) ? 3 : v; }
   function emptyState(title, text, iconName) {
     return h("li", { class: "empty" },
       h("div", { class: "empty-art", html: iconName === "check" ? svg("check", 22) : svg("note", 22) }),
@@ -1681,11 +1960,68 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("actReplyAll").hidden = !read;
     $("actInsert").hidden = !(ctx && ctx.compose);
   }
+  function attention() {
+    const lim = waitAlertDays();
+    const out = { late: 0, long: 0 };
+    allEntries().forEach((e) => e.notes.forEach((n) => {
+      if (isLate(n)) out.late++;
+      else if (isWait(n) && waitDays(n) >= lim) out.long++;
+    }));
+    return out;
+  }
   function refreshBadges() {
-    const late = allEntries().reduce((s, e) => s + e.notes.filter(isLate).length, 0);
-    $("dueCount").hidden = !late;
-    $("dueCount").textContent = late;
-    $("dueCount").title = late + " overdue or due today";
+    const a = attention(), total = a.late + a.long;
+    $("dueCount").hidden = !total;
+    $("dueCount").textContent = total;
+    $("dueCount").title = a.late + " overdue or due today" + (a.long ? ", " + a.long + " waiting too long" : "");
+  }
+
+  // ----- Today tab -----
+  function renderToday() {
+    const body = $("todayBody");
+    body.innerHTML = "";
+    const lim = waitAlertDays();
+    const rows = [];
+    allEntries().forEach((e) => e.notes.forEach((n) => { if (n.id && isOpen(n)) rows.push({ e, n }); }));
+    const sec = [
+      { title: "Overdue", color: "#d9534f", rows: rows.filter((r) => dueState(r.n) === "overdue").sort((a, b) => dueTs(a.n.due) - dueTs(b.n.due)) },
+      { title: "Due today", color: "#d9822b", rows: rows.filter((r) => dueState(r.n) === "today") },
+      { title: "Waiting too long", color: WAIT_HEX, rows: rows.filter((r) => isWait(r.n) && !isLate(r.n) && waitDays(r.n) >= lim).sort((a, b) => waitDays(b.n) - waitDays(a.n)),
+        hint: "Awaiting reply for " + lim + " workdays or more" },
+      { title: "Due this week", color: "#1f5fad", rows: rows.filter((r) => dueState(r.n) === "soon").sort((a, b) => dueTs(a.n.due) - dueTs(b.n.due)) },
+      { title: "Still waiting", color: "#8a94a0", rows: rows.filter((r) => isWait(r.n) && !isLate(r.n) && dueState(r.n) !== "soon" && waitDays(r.n) < lim).sort((a, b) => waitDays(b.n) - waitDays(a.n)) },
+    ];
+    const urgent = sec[0].rows.length + sec[1].rows.length + sec[2].rows.length;
+    const doneWeek = allEntries().reduce((s, e) => s + e.notes.filter((n) => isDone(n) && (n.doneAt || 0) >= weekStart()).length, 0);
+    body.appendChild(h("div", { class: "today-lead" },
+      h("div", { class: "today-date", text: new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) }),
+      h("div", { class: "today-sum", text: urgent ? pl(urgent, "item") + " need attention" : "Nothing needs attention right now" })));
+    if (!sec.some((x) => x.rows.length)) {
+      body.appendChild(h("ul", { class: "notes" }, emptyState("All clear", "Overdue, due today, due this week and waiting notes show up here.", "check")));
+    }
+    sec.forEach((x) => {
+      if (!x.rows.length) return;
+      const block = h("section", { class: "today-sec", style: "--c:" + x.color },
+        h("h3", { class: "today-h" }, h("span", { text: x.title }), h("span", { class: "today-n", text: x.rows.length })),
+        x.hint ? h("div", { class: "hint", style: "margin:-2px 0 6px", text: x.hint }) : null);
+      x.rows.forEach((r) => block.appendChild(todayRow(r.e, r.n)));
+      body.appendChild(block);
+    });
+    body.appendChild(h("div", { class: "today-foot muted", text: doneWeek ? pl(doneWeek, "note") + " closed this week" : "Nothing closed this week yet" }));
+  }
+  function todayRow(e, n) {
+    const st = statusOf(n.color), ds = dueState(n);
+    const row = h("div", { class: "trow", style: "--c:" + st.hex });
+    row.appendChild(h("div", { class: "note-text", dir: "auto", text: n.text }));
+    row.appendChild(h("div", { class: "trow-meta" },
+      h("button", { class: "trow-subj", title: "Open " + (e.v.mt ? "meeting" : "email"), onclick: () => openEmail(e.id) },
+        ic(e.v.mt ? "cal" : "mail", 12), h("bdi", { text: e.v.s })),
+      ds ? h("span", { class: "due " + ds, text: dueText(n) }) : null, waitChip(n),
+      h("span", { class: "trow-actions" },
+        iconBtn("check", "Mark as done", () => remoteUpdate(e, n.id, { done: 1 }, "Marked as done"), "ok"),
+        iconBtn("snooze", n.due ? "Move the due date" : "Set a due date", (ev) => snoozeMenu(ev.currentTarget, n.due,
+          (v) => remoteUpdate(e, n.id, { due: v }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed"))))));
+    return row;
   }
 
   // ----- All notes tab -----
@@ -1698,11 +2034,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const entries = allEntries()
       .filter((e) => !q || lc(e.v.s + " " + e.tags.join(" ") + " " + e.notes.map((n) => n.text + " " + n.att).join(" ")).includes(q))
       .filter((e) => {
-        if (f === "open") return e.notes.some((n) => !isDone(n));
+        if (f === "open") return e.notes.some(isOpen);
         if (f === "done") return e.notes.some(isDone);
         if (f === "due") return e.notes.some((n) => dueState(n));
         if (f === "late") return e.notes.some(isLate);
-        if (f === "wait") return e.notes.some((n) => !isDone(n) && statusOf(n.color).hex === WAIT_HEX);
+        if (f === "wait") return e.notes.some((n) => isWait(n) && !isDone(n));
         if (f === "meet") return !!e.v.mt;
         if (f === "tagged") return e.tags.length > 0;
         return true;
@@ -1716,7 +2052,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         q || f !== "all" ? "Try another word or filter." : "Notes you write on emails show up here."));
     }
     entries.forEach((e) => {
-      const open = e.notes.filter((n) => !isDone(n));
+      const open = e.notes.filter(isOpen);
       const fd = firstDue(e.notes);
       const latest = (open.length ? open : e.notes).slice().sort((x, y) => y.updated - x.updated)[0];
       const tags = e.tags.slice(0, 3);
@@ -1727,8 +2063,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           fd ? h("span", { class: "pill " + dueState(fd), text: dueText(fd) }) : null),
         h("div", { class: "row-sub" },
           h("span", { class: "dots" }, dots.map((c) => h("i", { style: "background:" + c }))),
-          h("span", { class: "muted", text: !e.notes.length ? "Labeled, no notes" : open.length + " open" + (e.notes.length > open.length ? ", " + (e.notes.length - open.length) + " done" : "") }),
-          latest ? h("bdi", { class: "row-prev", text: latest.text.replace(/\s+/g, " ").slice(0, 90) }) : null),
+          h("span", { class: "muted", text: !e.notes.length ? "Labeled, no notes" : [open.length + " open", e.notes.filter(isInfo).length ? e.notes.filter(isInfo).length + " info" : "", e.notes.filter(isDone).length ? e.notes.filter(isDone).length + " done" : ""].filter(Boolean).join(", ") })),
+        latest ? h("div", { class: "row-prev", dir: "auto", text: latest.text.replace(/\s+/g, " ").slice(0, 90) }) : null,
         tags.length ? h("div", { class: "row-tags" }, tags.map((t) => tagChip(t))) : null)));
     });
     const used = indexUsage();
@@ -1745,7 +2081,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const m = $("modal"), inp = $("modalInput"), okb = $("modalOk"), cancel = $("modalCancel");
       $("modalTitle").textContent = o.title;
       $("modalText").textContent = o.text || "";
-      $("modalIcon").innerHTML = o.danger ? svg("alert", 18) : o.input ? svg("tag", 18) : svg("note", 18);
+      $("modalText").hidden = !o.text;
+      const ml = $("modalList");
+      ml.innerHTML = "";
+      ml.hidden = !o.list;
+      (o.list || []).forEach(([k, v]) => ml.appendChild(h("li", null, h("kbd", { text: k }), h("span", { text: v }))));
+      $("modalIcon").innerHTML = o.danger ? svg("alert", 18) : o.input ? svg("tag", 18) : o.list ? svg("kbd", 18) : svg("note", 18);
       $("modalIcon").className = "modal-ic" + (o.danger ? " danger" : "");
       okb.textContent = o.ok;
       okb.className = "btn " + (o.danger ? "danger" : "primary");
@@ -1779,12 +2120,35 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   const confirmDialog = (title, text, okLabel) => dialog({ title, text, ok: okLabel, danger: true });
   const promptDialog = (title, text, value, okLabel) => dialog({ title, text, value, ok: okLabel, input: true });
 
+  const SHORTCUTS = [
+    ["Alt+N", "New note (focus the note field)"], ["Ctrl+Enter", "Save the note"], ["Esc", "Cancel editing / close menus"],
+    ["Alt+D", "Insert today's date"], ["Alt+T", "Due today"], ["Alt+L", "Add a label to the note"],
+    ["Alt+1 … Alt+6", "Status: Note, Urgent, Review, Waiting, Done, Info"], ["Alt+E", "Label the email"], ["Alt+/", "This list"],
+  ];
+  function showShortcuts() {
+    dialog({ title: "Keyboard shortcuts", ok: "Close", alert: true, list: SHORTCUTS });
+  }
+  function onGlobalKey(e) {
+    if (!$("modal").hidden) return;
+    if (e.key === "Escape") { if (popEl) { e.preventDefault(); closePopover(); } return; }
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    const openComposer = () => { switchTab("item"); $("composer").classList.add("open"); };
+    if (e.code === "KeyN") { e.preventDefault(); openComposer(); if (!editingId) resetComposer(); $("input").focus(); }
+    else if (e.code === "KeyL") { e.preventDefault(); openComposer(); $("tagInput").focus(); }
+    else if (e.code === "KeyE") { e.preventDefault(); switchTab("item"); $("elInput").focus(); }
+    else if (e.code === "KeyT") { e.preventDefault(); openComposer(); setDue("today", document.querySelector('#dueChips button[data-due="today"]')); $("input").focus(); }
+    else if (e.code === "KeyD") { e.preventDefault(); openComposer(); insertToday(); }
+    else if (e.code === "Slash") { e.preventDefault(); showShortcuts(); }
+    else if (/^Digit[1-6]$/.test(e.code)) { e.preventDefault(); openComposer(); setColor(STATUS[parseInt(e.code.slice(5), 10) - 1].hex); }
+  }
   function switchTab(which) {
     tab = which;
-    ["item", "all", "tag", "sum"].forEach((t) => {
+    closePopover();
+    ["item", "today", "all", "tag", "sum"].forEach((t) => {
       $("tab-" + t).setAttribute("aria-selected", which === t);
       $("view-" + t).hidden = which !== t;
     });
+    if (which === "today") renderToday();
     if (which === "all") renderIndex();
     if (which === "tag") renderTags();
     if (which === "sum") renderSummaryInfo();
@@ -1807,6 +2171,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("save").onclick = saveNote;
     $("cancel").onclick = resetComposer;
     $("tplSave").onclick = saveAsTemplate;
+    $("insDate").onclick = insertToday;
     $("tplEdit").onclick = () => { const p = $("tplPanel"); p.hidden = !p.hidden; $("tplEdit").setAttribute("aria-expanded", !p.hidden); };
     $("dueClear").onclick = () => { $("due").value = ""; document.querySelectorAll("#dueChips button").forEach((b) => b.setAttribute("aria-pressed", "false")); };
     document.querySelectorAll("#dueChips button").forEach((b) => { b.onclick = () => setDue(b.dataset.due, b); });
@@ -1819,7 +2184,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("actReply").onclick = () => replyWithNotes(false);
     $("actReplyAll").onclick = () => replyWithNotes(true);
     $("actInsert").onclick = () => insertHtml(notesHtml(notes.filter((n) => !isDone(n))), "Notes inserted");
-    ["item", "all", "tag", "sum"].forEach((t) => { $("tab-" + t).onclick = () => { if (t === "tag") openTagName = null; switchTab(t); }; });
+    ["item", "today", "all", "tag", "sum"].forEach((t) => { $("tab-" + t).onclick = () => { if (t === "tag") openTagName = null; switchTab(t); }; });
     $("search").addEventListener("input", renderIndex);
     $("idxFilter").onchange = renderIndex;
     // labels
@@ -1844,10 +2209,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     });
     el.addEventListener("change", () => { if (allTagNames().some((t) => lc(t) === lc(el.value.trim()))) addEmailTagFromInput(); });
     $("tagAddHere").onclick = () => { const t = openTagName; switchTab("item"); resetComposer(); draftTags = [t]; renderTagComposer(); $("input").focus(); };
+    $("tagByStage").onchange = () => { const st = getTagStore(); st.byStage = $("tagByStage").checked; saveTagStore(st); renderTags(); };
     $("tagCats").onchange = () => {
       const st = getTagStore(); st.cats = $("tagCats").checked; saveTagStore(st); syncCategory();
       toast(st.cats ? "Labels now show as categories" : "Label categories turned off");
     };
     $("ver").textContent = "v" + VERSION;
+    $("kbdHelp").onclick = showShortcuts;
+    document.addEventListener("keydown", onGlobalKey, true);
+    window.addEventListener("resize", () => { const r = $("quickRow"); r.classList.toggle("fade", r.scrollWidth > r.clientWidth + 2); });
   }
 })();
