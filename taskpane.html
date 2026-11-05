@@ -4,265 +4,576 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My Notes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
     :root {
-      --bg: #faf9f7; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
-      --line: #e6e2db; --accent: #b4540f; --accent-soft: #fbecd9;
-      --danger: #b42318; --note: #fff8e6; --note-line: #f1dfae;
-      --over-bg: #fde2e1; --over-ink: #b42318; --today-bg: #fdecd0; --today-ink: #9a5800;
-      --soon-bg: #e4eefb; --soon-ink: #1f5fa8;
+      --paper: #f5f7f6; --sheet: #ffffff; --ink: #1d2731; --ink2: #4e5b66; --ink3: #7d8892;
+      --frame: #a9b4bb; --rule: #d6dcdf; --rule2: #e9edee;
+      --blue: #1f5fad; --blue-ink: #164a8a; --blue-soft: #e4edf8;
+      --danger: #b8342a; --danger-soft: #fbe6e4; --ok: #2e7d32; --warn: #b26a00;
+      --over-bg: #fde2e1; --over-ink: #a8241b; --today-bg: #fdecd0; --today-ink: #8a5000;
+      --soon-bg: #e4edf8; --soon-ink: #1f5fad;
+      --font: "IBM Plex Sans", "IBM Plex Sans Hebrew", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      color-scheme: light;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #1c1b19; --panel: #252321; --ink: #ece8e1; --muted: #a39d93;
-        --line: #3a3733; --accent: #f0a35e; --accent-soft: #3a2a1a;
-        --danger: #f2877d; --note: #2e2a20; --note-line: #4a4230;
+        --paper: #1a1d20; --sheet: #23272b; --ink: #e4e8eb; --ink2: #aab4bc; --ink3: #85909a;
+        --frame: #56616a; --rule: #384046; --rule2: #2c3236;
+        --blue: #80b2ee; --blue-ink: #a9cbf5; --blue-soft: #213550;
+        --danger: #f08c82; --danger-soft: #45231f; --ok: #81c784; --warn: #f0b45e;
         --over-bg: #4a2422; --over-ink: #ffb4ab; --today-bg: #47331a; --today-ink: #ffcf8a;
         --soon-bg: #1f3149; --soon-ink: #a9cbf5;
+        color-scheme: dark;
       }
     }
-    * { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: border-box; }
     [hidden] { display: none !important; }
-    body {
-      margin: 0; background: var(--bg); color: var(--ink);
-      font: 14px/1.5 "Segoe UI", Arial, sans-serif;
-    }
-    header { padding: 12px 14px 0; }
-    .subject {
-      font-weight: 600; font-size: 13px; color: var(--muted);
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .tabs { display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--line); }
-    .tab {
-      background: none; border: none; padding: 8px 9px; cursor: pointer;
-      color: var(--muted); font: inherit; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px;
-    }
-    .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-    .badge {
-      display: inline-block; min-width: 18px; padding: 0 5px; margin-inline-start: 4px;
-      border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; text-align: center;
-    }
+    html, body { margin: 0; }
+    body { background: var(--paper); color: var(--ink); font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .45; }
+    :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+    bdi { unicode-bidi: isolate; }
+    .ic { display: inline-flex; flex: none; }
+    .muted { color: var(--ink3); }
+    .small { font-size: 11.5px; }
+
+    /* ---------- app bar + title block ---------- */
+    .app { padding: 10px 12px 0; }
+    .brand { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+    .brand-name { font-weight: 600; font-size: 13px; letter-spacing: .01em; }
+    .brand .ver { margin-inline-start: auto; font-size: 10.5px; color: var(--ink3); }
+    .tb { border: 1px solid var(--frame); background: var(--sheet); border-radius: 3px; }
+    .tb-subj { display: flex; gap: 8px; align-items: flex-start; padding: 7px 9px; border-bottom: 1px solid var(--rule); }
+    .tb-subj .ic { color: var(--ink3); margin-top: 2px; }
+    #subject { font-weight: 600; font-size: 13px; line-height: 1.35; overflow: hidden; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; unicode-bidi: plaintext; text-align: start; }
+    .tb-row { display: grid; grid-template-columns: 1.15fr 1.25fr .9fr; }
+    .tb-cell { padding: 4px 9px 5px; min-width: 0; border-inline-start: 1px solid var(--rule); background: none; border-top: 0; border-bottom: 0; border-inline-end: 0; text-align: start; }
+    .tb-cell:first-child { border-inline-start: 0; }
+    .tb-k { display: block; font-size: 10.5px; color: var(--ink3); }
+    .tb-v { display: block; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tb-cell.link { cursor: pointer; }
+    .tb-cell.link .tb-v { color: var(--blue); }
+    .tb-cell.link:hover { background: var(--blue-soft); }
+    button.tb-cell { cursor: default; }
+    button.tb-cell.link { cursor: pointer; }
+    .meter { display: flex; align-items: center; gap: 6px; }
+    .meter-bar { flex: 1; height: 4px; background: var(--rule2); border-radius: 2px; overflow: hidden; min-width: 22px; }
+    .meter-bar i { display: block; height: 100%; width: 0; background: var(--ink3); border-radius: 2px; }
+    .warn .meter-bar i { background: var(--warn); }
+    .meter .tb-v { font-variant-numeric: tabular-nums; }
+
+    /* ---------- tabs ---------- */
+    .tabs { display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; padding: 7px 8px 8px; color: var(--ink2); white-space: nowrap; font-size: 12.5px; }
+    .tab:hover { color: var(--ink); }
+    .tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--blue); }
+    .badge { min-width: 17px; padding: 0 5px; border-radius: 9px; font-size: 10.5px; line-height: 16px; text-align: center;
+      background: var(--rule2); color: var(--ink2); font-weight: 600; }
     .badge.alert { background: var(--over-bg); color: var(--over-ink); }
-    main { padding: 12px 14px 24px; }
-    .view[hidden] { display: none; }
 
-    .composer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-    textarea {
-      width: 100%; min-height: 70px; resize: vertical; border: none; outline: none;
-      background: transparent; color: var(--ink); font: inherit;
-    }
-    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-    .hint { font-size: 11px; color: var(--muted); }
-    .btn {
-      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-      border-radius: 6px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
-    }
-    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .btn:disabled { opacity: .5; cursor: default; }
+    main { padding: 12px 12px 28px; }
+
+    /* ---------- generic controls ---------- */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--rule);
+      background: var(--sheet); border-radius: 6px; padding: 5px 11px; font-size: 12.5px; white-space: nowrap; }
+    .btn:hover:not(:disabled) { border-color: var(--frame); }
+    .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 500; }
+    @media (prefers-color-scheme: dark) { .btn.primary { color: #10233a; } }
+    .btn.primary:hover:not(:disabled) { background: var(--blue-ink); border-color: var(--blue-ink); }
+    .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 500; }
+    @media (prefers-color-scheme: dark) { .btn.danger { color: #3a120e; } }
+    .btn.sm { padding: 3px 8px; font-size: 12px; }
     .btn.wide { width: 100%; }
-    .colors { display: flex; gap: 6px; align-items: center; }
-    .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-    .swatch[aria-pressed="true"] { border-color: var(--ink); }
-    .label-name { font-size: 12px; color: var(--muted); margin-inline-start: 4px; white-space: nowrap; }
-    .due-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-    .due-row input {
-      border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px;
-      background: var(--panel); color: var(--ink); font: inherit; font-size: 12px;
-    }
-    .link-btn { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 0 2px; }
-    .link-btn:hover { color: var(--accent); }
+    .linkbtn { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; padding: 2px 0; color: var(--ink2); font-size: 12.5px; }
+    .linkbtn:hover { color: var(--blue); }
+    .linkbtn.danger:hover { color: var(--danger); }
+    .ibtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 5px;
+      border: 0; background: none; color: var(--ink3); padding: 0; }
+    .ibtn:hover:not(:disabled) { background: var(--rule2); color: var(--ink); }
+    .ibtn.ok:hover { color: var(--ok); }
+    .ibtn.danger:hover { color: var(--danger); }
+    .ibtn.sm { width: 22px; height: 22px; font-size: 12px; }
+    .field { width: 100%; padding: 6px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); font-size: 12.5px; }
+    .field:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 2px var(--blue-soft); }
+    .check { display: flex; align-items: center; gap: 7px; font-size: 12.5px; cursor: pointer; }
+    .check input { margin: 0; accent-color: var(--blue); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+    .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 17px; padding: 0 7px; border-radius: 9px; white-space: nowrap; }
+    .pill.overdue { background: var(--over-bg); color: var(--over-ink); font-weight: 600; }
+    .pill.today { background: var(--today-bg); color: var(--today-ink); font-weight: 600; }
+    .pill.soon, .pill.later { background: var(--soon-bg); color: var(--soon-ink); }
 
-    .notes { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 10px; }
-    .note {
-      background: var(--note); border: 1px solid var(--note-line); border-inline-start: 4px solid var(--c, #e0b94a);
-      border-radius: 6px; padding: 8px 10px;
-    }
-    .note.done { opacity: .62; }
-    .note.done .note-text { text-decoration: line-through; }
-    .note-text { white-space: pre-wrap; word-wrap: break-word; unicode-bidi: plaintext; }
-    .note-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
-    .note-actions { white-space: nowrap; }
-    .note-actions button {
-      background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 2px 4px;
-    }
-    .note-actions button:hover { color: var(--accent); }
-    .note-actions button.del:hover { color: var(--danger); }
-    .chip { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 8px; line-height: 17px; white-space: nowrap; }
-    .chip.overdue { background: var(--over-bg); color: var(--over-ink); font-weight: 600; }
-    .chip.today { background: var(--today-bg); color: var(--today-ink); font-weight: 600; }
-    .chip.soon, .chip.later { background: var(--soon-bg); color: var(--soon-ink); }
-    .done-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px;
-      padding-top: 8px; border-top: 1px solid var(--line); }
-    .done-bar .link-btn { font-size: 12.5px; }
-    .done-bar .danger:hover { color: var(--danger); }
-    .empty { color: var(--muted); text-align: center; padding: 24px 8px; font-size: 13px; list-style: none; }
+    /* ---------- quick notes ---------- */
+    .quick-wrap { margin-bottom: 8px; }
+    .quick-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink3); margin-bottom: 5px; }
+    .quick-head .linkbtn { margin-inline-start: auto; font-size: 11.5px; }
+    .quick-row { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px;
+      -webkit-mask-image: linear-gradient(to right, #000 88%, transparent); mask-image: linear-gradient(to right, #000 88%, transparent); }
+    .quick-row::-webkit-scrollbar { display: none; }
+    .quick { display: inline-flex; align-items: center; gap: 6px; max-width: 200px; flex: none; border: 1px solid var(--rule);
+      background: var(--sheet); border-radius: 14px; padding: 3px 10px 3px 8px; font-size: 12px; color: var(--ink2); }
+    .quick:hover { border-color: var(--frame); color: var(--ink); }
+    .quick i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .quick bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tpl-panel { margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--rule); border-radius: 6px; background: var(--sheet); }
+    .tpl-panel ul { list-style: none; margin: 0 0 6px; padding: 0; }
+    .tpl { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+    .tpl-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .search, select.search {
-      width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--panel); color: var(--ink); font: inherit; font-size: 13px;
-    }
-    .filters { display: flex; gap: 6px; margin-top: 8px; }
-    .index { list-style: none; padding: 0; margin: 10px 0 0; }
-    .index li { border-bottom: 1px solid var(--line); }
-    .index button.rowbtn {
-      display: block; width: 100%; text-align: start; background: none; border: none;
-      padding: 9px 2px; cursor: pointer; color: var(--ink); font: inherit;
-    }
-    .index button.rowbtn:hover { background: var(--accent-soft); }
-    .idx-top { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
-    .idx-subj { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
-    .idx-prev { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* ---------- composer ---------- */
+    .composer { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; }
+    .composer.editing { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
+    .editing-tag { display: none; font-size: 11px; font-weight: 600; color: var(--blue); padding: 6px 10px 0; }
+    .composer.editing .editing-tag { display: block; }
+    .composer textarea { display: block; width: 100%; min-height: 64px; resize: vertical; border: 0; outline: none;
+      background: transparent; padding: 9px 10px 6px; font-size: 13.5px; line-height: 1.5; unicode-bidi: plaintext; }
+    .crow { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--rule2); min-height: 36px; }
+    .crow > .ic { color: var(--ink3); margin-top: 3px; }
+    .crow-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .status-pick { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+    .st { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; border: 0; border-inline-start: 1px solid var(--rule);
+      background: none; padding: 4px 3px 3px; font-size: 11.5px; color: var(--ink2); box-shadow: inset 0 -2px 0 transparent; }
+    .st:first-child { border-inline-start: 0; }
+    .st i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .st span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .st:hover { background: var(--rule2); color: var(--ink); }
+    .st[aria-pressed="true"] { color: var(--ink); font-weight: 600; background: color-mix(in srgb, var(--c) 15%, transparent);
+      box-shadow: inset 0 -2px 0 var(--c); }
+    .due-input { border: 1px solid var(--rule); border-radius: 5px; padding: 2px 5px; background: var(--sheet); font-size: 12px; }
+    .due-chips { display: inline-flex; gap: 3px; }
+    .due-chips button { border: 1px solid var(--rule); background: none; border-radius: 10px; padding: 0 7px; line-height: 19px;
+      font-size: 11.5px; color: var(--ink2); }
+    .due-chips button:hover { border-color: var(--frame); color: var(--ink); }
+    .due-chips button[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+    #tagInput { flex: 1; min-width: 100px; border: 0; outline: none; background: none; font-size: 12.5px; padding: 2px 0; }
+    #tagChips { display: contents; }
+    .tag-suggest { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; }
+    .tag-sug { display: inline-flex; align-items: center; gap: 3px; border: 1px dashed var(--frame); background: none; border-radius: 10px;
+      padding: 0 7px; line-height: 18px; font-size: 11.5px; color: var(--ink2); }
+    .tag-sug:hover { border-color: var(--blue); color: var(--blue); }
+    #attSel { flex: 1; min-width: 0; border: 1px solid var(--rule); border-radius: 5px; padding: 2px 4px; background: var(--sheet); font-size: 12px; }
+    .cfoot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--rule2); }
+    .cfoot .spacer { flex: 1; }
+    .kbd-hint { font-size: 11px; color: var(--ink3); }
 
-    .field-label { font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 5px; }
-    .field-label:first-child { margin-top: 0; }
-    .checks { display: flex; flex-direction: column; gap: 4px; }
-    .check { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; }
-    .check .dot { width: 10px; height: 10px; border-radius: 50%; }
+    /* ---------- labels ---------- */
+    .tag-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; border-radius: 10px; padding: 0 8px; line-height: 19px;
+      font-size: 11.5px; color: var(--ink); border: 1px solid color-mix(in srgb, var(--t) 50%, transparent);
+      background: color-mix(in srgb, var(--t) 13%, transparent); }
+    .tag-chip .tg { display: inline-flex; color: var(--t); }
+    .tag-chip bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.tag-chip:hover { background: color-mix(in srgb, var(--t) 24%, transparent); }
+    .tag-x { border: 0; background: none; color: var(--ink3); padding: 0 0 0 1px; font-size: 13px; line-height: 1; }
+    .tag-x:hover { color: var(--danger); }
+
+    /* ---------- notes ---------- */
+    .notes { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .note { background: var(--sheet); border: 1px solid var(--rule); border-inline-start: 3px solid var(--c); border-radius: 6px; padding: 7px 8px 4px 10px; }
+    .note.is-editing { outline: 2px solid var(--blue-soft); }
+    .note-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 18px; }
+    .st-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink2); font-weight: 500; }
+    .st-pill i { width: 7px; height: 7px; border-radius: 50%; }
+    .att { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--ink3); max-width: 55%; overflow: hidden; }
+    .att bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .note-text { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; font-size: 13.5px; margin-top: 3px; }
+    .note-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .note-foot { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11.5px; min-height: 26px; white-space: nowrap; }
+    .note-foot .linkbtn { font-size: 11.5px; }
+    .note-actions { margin-inline-start: auto; display: flex; gap: 1px; }
+    @media (hover: hover) {
+      .note .note-actions { opacity: .6; transition: opacity .12s; }
+      .note:hover .note-actions, .note:focus-within .note-actions { opacity: 1; }
+    }
+    .note.done { background: transparent; }
+    .note.done .note-text { text-decoration: line-through; text-decoration-color: var(--ink3); color: var(--ink2); }
+    .hist { list-style: none; margin: 4px 0 4px; padding: 6px 0 2px 10px; border-inline-start: 2px dotted var(--rule); }
+    .hist li { margin-bottom: 5px; }
+    .hist .note-text { font-size: 12.5px; color: var(--ink2); margin: 0; }
+    .empty { list-style: none; text-align: center; padding: 22px 12px 18px; border: 1px dashed var(--rule); border-radius: 8px; }
+    .empty-art { display: inline-flex; color: var(--ink3); margin-bottom: 4px; }
+    .empty-title { font-weight: 600; font-size: 13px; }
+    .empty-text { color: var(--ink3); font-size: 12px; margin-top: 2px; }
+
+    /* ---------- sections (done, thread) ---------- */
+    .section { margin-top: 14px; border-top: 1px solid var(--rule); padding-top: 6px; }
+    .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .sec-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 0; color: var(--ink2); font-size: 12.5px; font-weight: 500; text-align: start; }
+    .sec-toggle:hover { color: var(--ink); }
+    .mblock { padding: 8px 0 2px; border-top: 1px solid var(--rule2); }
+    .mblock:first-child { border-top: 0; }
+    .mblock-subj { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 0 0 4px; text-align: start;
+      font-weight: 600; font-size: 12.5px; color: var(--ink); }
+    .mblock-subj .ic { color: var(--ink3); }
+    .mblock-subj bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mblock-subj:hover bdi { color: var(--blue); text-decoration: underline; }
+    .mnote { border-inline-start: 2px solid var(--c); padding: 1px 0 1px 9px; margin: 0 0 7px 3px; }
+    .mnote .note-text { font-size: 12.5px; margin: 0; }
+    .mnote.done .note-text { text-decoration: line-through; color: var(--ink2); }
+    .mnote-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-top: 1px; flex-wrap: wrap; }
+    .st-mini { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); }
+    .st-mini i { width: 6px; height: 6px; border-radius: 50%; }
+
+    /* ---------- callouts ---------- */
+    .callout { border: 1px solid var(--blue); background: var(--blue-soft); border-radius: 8px; padding: 9px 11px; margin-bottom: 10px; }
+    .callout-title { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--blue-ink); }
+    .callout p { margin: 3px 0 6px; font-size: 12.5px; color: var(--ink2); }
+    .callout ul { list-style: none; margin: 0; padding: 0; }
+    .callout li { padding: 6px 0; border-top: 1px solid color-mix(in srgb, var(--blue) 25%, transparent); }
+    .callout li .note-text { margin: 0; font-size: 13px; }
+    .reply-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .reply-meta bdi { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reply-btns { display: flex; gap: 5px; flex: none; }
+    .callout .linkbtn { font-size: 12px; margin-top: 4px; }
+    .callout.neutral { border-color: var(--frame); background: var(--sheet); }
+    .callout.neutral .callout-title { color: var(--ink); }
+
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--rule); }
+
+    /* ---------- lists (all notes, labels) ---------- */
+    .toolbar { display: flex; gap: 6px; align-items: center; }
+    .toolbar .field { flex: 1; }
+    .toolbar select.field { flex: 0 0 auto; width: auto; }
+    .list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .list > li { border-bottom: 1px solid var(--rule2); }
+    .list > li.empty { border: 1px dashed var(--rule); margin-top: 6px; }
+    .row { display: block; width: 100%; text-align: start; background: none; border: 0; padding: 9px 4px; border-radius: 4px; }
+    .row:hover { background: var(--sheet); }
+    .row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .row-subj { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; font-size: 12.5px; }
+    .row-subj .ic { color: var(--ink3); }
+    .row-subj bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-sub { display: flex; align-items: center; gap: 7px; margin-top: 2px; font-size: 11.5px; min-width: 0; color: var(--ink2); }
+    .row-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dots { display: inline-flex; gap: 2px; }
+    .dots i { width: 6px; height: 6px; border-radius: 50%; }
+    .row-tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+    .store { margin-top: 16px; font-size: 11px; color: var(--ink3); }
+    .store .meter-bar { margin-bottom: 5px; }
+
+    .tag-head { display: flex; align-items: center; justify-content: space-between; }
+    .tag-head span { display: flex; gap: 12px; }
+    .tag-title { margin: 12px 0 2px; }
+    .tag-title .tag-chip { font-size: 14px; line-height: 26px; padding: 0 11px; font-weight: 600; }
+    .tag-actions { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 6px; }
+    #tagMails { margin-top: 8px; }
+
+    /* ---------- summary ---------- */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--frame); background: var(--sheet); border-radius: 3px; }
+    .stat { padding: 6px 8px 7px; border-inline-start: 1px solid var(--rule); min-width: 0; }
+    .stat:first-child { border-inline-start: 0; }
+    .stat b { display: block; font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .stat span { display: block; font-size: 10.5px; line-height: 1.25; color: var(--ink3); }
+    .stat.alert b { color: var(--over-ink); }
+    details.panel { border-bottom: 1px solid var(--rule); }
+    details.panel > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 11px 2px; cursor: pointer; font-weight: 600; }
+    details.panel > summary::-webkit-details-marker { display: none; }
+    details.panel > summary .ic:first-child { color: var(--ink3); }
+    details.panel > summary .chev { margin-inline-start: auto; color: var(--ink3); transition: transform .15s; }
+    details.panel[open] > summary .chev { transform: rotate(90deg); }
+    .panel-body { padding: 0 2px 14px; }
+    .flabel { font-size: 11.5px; font-weight: 500; color: var(--ink2); margin: 10px 0 4px; }
+    .flabel:first-child { margin-top: 0; }
     .two { display: flex; gap: 8px; }
-    .two > * { flex: 1; }
-    .actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-    #copyBox { width: 100%; height: 90px; margin-top: 8px; font: 11px/1.4 Consolas, monospace; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+    .two > * { flex: 1; min-width: 0; }
+    .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+    .hint { font-size: 11.5px; color: var(--ink3); margin-top: 4px; }
+    .info { font-size: 12px; color: var(--ink2); margin: 10px 0 8px; }
+    .cols { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule2); border-radius: 6px; }
+    .col { display: flex; align-items: center; justify-content: space-between; padding: 1px 4px 1px 8px; border-bottom: 1px solid var(--rule2); }
+    .col:last-child { border-bottom: 0; }
+    .col-move { display: flex; }
+    #copyBox { width: 100%; height: 90px; margin-top: 8px; font: 11px/1.4 Consolas, monospace; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); }
 
-    .modal {
-      position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 50;
-      display: flex; align-items: center; justify-content: center; padding: 16px;
-    }
-    .modal-card {
-      background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
-      padding: 16px; width: 100%; max-width: 320px; box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
-    }
-    .modal-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
-    .modal-title .warn { color: var(--danger); font-size: 18px; }
-    .modal-text { margin: 8px 0 16px; font-size: 13px; color: var(--muted); }
+    /* ---------- dialog + toast ---------- */
+    .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px;
+      background: rgba(18, 24, 30, .45); }
+    .modal-card { width: 100%; max-width: 320px; background: var(--sheet); border: 1px solid var(--frame); border-radius: 10px; padding: 16px;
+      box-shadow: 0 12px 32px rgba(10, 20, 30, .28); }
+    .modal-title { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14.5px; }
+    .modal-ic { display: inline-flex; color: var(--blue); }
+    .modal-ic.danger { color: var(--danger); }
+    .modal-text { margin: 8px 0 14px; color: var(--ink2); font-size: 12.5px; }
+    #modalInput { margin: -4px 0 14px; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    .btn.danger { background: #c4320a; border-color: #c4320a; color: #fff; }
-    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .toast {
-      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
-      background: var(--ink); color: var(--bg); padding: 6px 14px; border-radius: 6px; font-size: 12px;
-      opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%; text-align: center;
-    }
-    .toast.show { opacity: 1; }
+    .toast { position: fixed; left: 50%; bottom: 14px; transform: translate(-50%, 6px); max-width: 90%; text-align: center;
+      background: var(--ink); color: var(--paper); padding: 7px 14px; border-radius: 6px; font-size: 12px; opacity: 0; pointer-events: none;
+      transition: opacity .18s, transform .18s; z-index: 60; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
-    /* touch screens (Outlook mobile) */
+    /* ---------- touch (Outlook mobile) ---------- */
     @media (pointer: coarse) {
-      .swatch { width: 26px; height: 26px; }
-      .note-actions button, .link-btn { padding: 6px 8px; font-size: 13px; }
+      .ibtn { width: 34px; height: 34px; }
+      .st, .due-chips button, .quick { padding-top: 4px; padding-bottom: 4px; }
       .tab { padding: 10px 10px; }
+    }
+    @media (max-width: 330px) {
+      .tb-row { grid-template-columns: 1fr 1fr; }
+      .tb-cell:last-child { grid-column: 1 / -1; border-inline-start: 0; border-top: 1px solid var(--rule); }
+      .checks { grid-template-columns: 1fr; }
+      .st i { display: none; }
+      .st { font-size: 11px; padding-inline: 1px; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="subject" id="subject">Loading…</div>
-    <div class="tabs" role="tablist">
-      <button class="tab" role="tab" id="tab-item" aria-selected="true">This email <span class="badge" id="count">0</span></button>
-      <button class="tab" role="tab" id="tab-all" aria-selected="false">All notes <span class="badge alert" id="dueCount" hidden></span></button>
-      <button class="tab" role="tab" id="tab-sum" aria-selected="false">Summary</button>
+  <div class="app">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+        <path d="M2 2h11l3 3v11H2z" fill="#e0b94a"/><path d="M13 2v3h3z" fill="#b4540f"/>
+        <path d="M5 7.5h7M5 10h7M5 12.5h4" stroke="#5a3c14" stroke-width="1.3" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">My Notes</span>
+      <span class="ver" id="ver"></span>
     </div>
-  </header>
+
+    <div class="tb" role="group" aria-label="Current item">
+      <div class="tb-subj"><span class="ic" id="tbIcon"></span><div id="subject">Loading…</div></div>
+      <div class="tb-row">
+        <div class="tb-cell"><span class="tb-k">Notes</span><span class="tb-v" id="tbNotes">–</span></div>
+        <button class="tb-cell" id="tbThreadCell" title="Notes on other emails in this conversation"><span class="tb-k">Thread</span><span class="tb-v" id="tbThread">–</span></button>
+        <div class="tb-cell" id="tbSpaceCell"><span class="tb-k">Space</span>
+          <span class="meter"><span class="meter-bar"><i id="tbSpace"></i></span><span class="tb-v" id="tbSpacePct">0%</span></span></div>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" id="tab-item" aria-selected="true">This item <span class="badge" id="count" hidden>0</span></button>
+      <button class="tab" role="tab" id="tab-all" aria-selected="false">All notes <span class="badge alert" id="dueCount" hidden></span></button>
+      <button class="tab" role="tab" id="tab-tag" aria-selected="false">Labels</button>
+      <button class="tab" role="tab" id="tab-sum" aria-selected="false">Reports</button>
+    </nav>
+  </div>
 
   <main>
-    <!-- This email -->
+    <!-- ===== This item ===== -->
     <section class="view" id="view-item">
-      <div class="composer">
-        <textarea id="input" dir="auto" placeholder="Write a note for this email…"></textarea>
-        <div class="row">
-          <div class="colors" id="colors"></div>
-        </div>
-        <div class="row">
-          <div class="due-row">
-            <label for="due">⏰ Due</label>
-            <input type="date" id="due">
-            <button class="link-btn" id="dueClear" title="Clear due date">✕</button>
-          </div>
-          <div>
-            <button class="btn" id="cancel" hidden>Cancel</button>
-            <button class="btn primary" id="save" disabled>Add</button>
-          </div>
-        </div>
-        <div class="hint">Ctrl+Enter to save</div>
+      <div class="callout" id="replyBox" hidden>
+        <div class="callout-title"><span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4L3 7.5 6.5 11"/><path d="M3 7.5h6a4 4 0 014 4v1"/></svg></span>Reply received</div>
+        <p>You were waiting for a reply in this thread:</p>
+        <ul id="replyList"></ul>
+        <button class="linkbtn" id="replyDismiss">Not now</button>
       </div>
+
+      <div class="callout neutral" id="restoreBox" hidden>
+        <div class="callout-title">This email contains a My Notes backup</div>
+        <p id="restoreText"></p>
+        <button class="btn sm primary" id="restoreGo">Restore backup</button>
+      </div>
+
+      <div class="quick-wrap" id="quickWrap">
+        <div class="quick-head">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg></span>
+          <span>Quick notes</span>
+          <button class="linkbtn" id="tplEdit" aria-expanded="false">Edit</button>
+        </div>
+        <div class="quick-row" id="quickRow"></div>
+        <div class="tpl-panel" id="tplPanel" hidden>
+          <ul id="tplList"></ul>
+          <div class="hint">To add one, write a note below and click “Save as quick note”. The due date is kept as a number of workdays.</div>
+        </div>
+      </div>
+
+      <div class="composer" id="composer">
+        <div class="editing-tag">Editing note</div>
+        <textarea id="input" dir="auto" aria-label="Note" placeholder="Write a note…"></textarea>
+        <div class="crow">
+          <div class="status-pick" id="statusPick" role="group" aria-label="Status"></div>
+        </div>
+        <div class="crow">
+          <span class="ic" title="Due date" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg></span>
+          <div class="crow-main">
+          <input type="date" id="due" class="due-input" aria-label="Due date">
+          <button class="ibtn sm" id="dueClear" title="Clear due date" aria-label="Clear due date">×</button>
+          <span class="due-chips" id="dueChips">
+            <button data-due="today" title="Today">Today</button>
+            <button data-due="1" title="Next workday (Sun–Thu)">+1</button>
+            <button data-due="3" title="In 3 workdays (Sun–Thu)">+3</button>
+            <button data-due="5" title="In 5 workdays (Sun–Thu)">+5</button>
+            <button data-due="sun" title="Next Sunday">Sun</button>
+          </span>
+          </div>
+        </div>
+        <div class="crow">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.3" cy="5.3" r=".8"/></svg></span>
+          <div class="crow-main">
+            <span id="tagChips"></span>
+            <input id="tagInput" list="tagOptions" dir="auto" placeholder="Add label" autocomplete="off" aria-label="Add label">
+            <datalist id="tagOptions"></datalist>
+            <div class="tag-suggest" id="tagSuggest" hidden></div>
+          </div>
+        </div>
+        <div class="crow" id="attRow" hidden>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 7.5l-4.6 4.6a2.6 2.6 0 01-3.7-3.7L8.6 3.5a1.7 1.7 0 012.4 2.4L6.3 10.6a.8.8 0 01-1.1-1.1L9.5 5.2"/></svg></span>
+          <select id="attSel" aria-label="Related file"></select>
+        </div>
+        <div class="cfoot">
+          <button class="linkbtn" id="tplSave" hidden>Save as quick note</button>
+          <span class="spacer"></span>
+          <span class="kbd-hint">Ctrl+Enter</span>
+          <button class="btn" id="cancel" hidden>Cancel</button>
+          <button class="btn primary" id="save" disabled>Add note</button>
+        </div>
+      </div>
+
       <ul class="notes" id="notes"></ul>
-      <div id="doneWrap" hidden>
-        <div class="done-bar">
-          <button class="link-btn" id="doneToggle" title="Show or hide done notes"></button>
-          <button class="link-btn danger" id="doneClear"></button>
+
+      <div class="section" id="doneWrap" hidden>
+        <div class="sec-head">
+          <button class="sec-toggle" id="doneToggle" aria-expanded="false"></button>
+          <button class="linkbtn danger" id="doneClear"></button>
         </div>
         <ul class="notes" id="doneNotes" hidden></ul>
       </div>
+
+      <div class="section" id="threadWrap" hidden>
+        <button class="sec-toggle" id="threadToggle" aria-expanded="true"></button>
+        <div id="threadBody"></div>
+      </div>
+
+      <div class="actions" id="actions" hidden>
+        <button class="btn sm" id="actReply"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 4L3 7.5 6.5 11"/><path d="M3 7.5h6a4 4 0 014 4v1"/></svg>Reply with notes</button>
+        <button class="btn sm" id="actReplyAll"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4L5 7.5 8.5 11"/><path d="M5.5 4L2 7.5 5.5 11"/><path d="M5 7.5h4.5a4 4 0 014 4v1"/></svg>Reply all with notes</button>
+        <button class="btn sm" id="actInsert"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3"/><path d="M3 12.5h10"/></svg>Insert notes into the body</button>
+      </div>
     </section>
 
-    <!-- All notes -->
+    <!-- ===== All notes ===== -->
     <section class="view" id="view-all" hidden>
-      <input class="search" id="search" type="search" dir="auto" placeholder="Search notes…">
-      <div class="filters">
-        <select class="search" id="idxFilter">
+      <div class="toolbar">
+        <input class="field" id="search" type="search" dir="auto" placeholder="Search notes, subjects, labels">
+        <select class="field" id="idxFilter" aria-label="Filter">
           <option value="all">All</option>
           <option value="open">Open</option>
-          <option value="due">With due date</option>
           <option value="late">Overdue / today</option>
+          <option value="due">With due date</option>
+          <option value="wait">Awaiting reply</option>
+          <option value="meet">Meetings</option>
           <option value="done">Done</option>
         </select>
       </div>
-      <ul class="index" id="index"></ul>
+      <ul class="list" id="index"></ul>
+      <div class="store" id="storeWrap">
+        <div class="meter-bar"><i id="storeBar"></i></div>
+        <div id="storeText"></div>
+      </div>
     </section>
 
-    <!-- Summary -->
+    <!-- ===== Labels ===== -->
+    <section class="view" id="view-tag" hidden>
+      <div id="tagListView">
+        <div class="toolbar">
+          <input class="field" id="tagSearch" type="search" dir="auto" placeholder="Search labels">
+          <button class="btn" id="tagNew">New label</button>
+        </div>
+        <ul class="list" id="tagList"></ul>
+        <label class="check" style="margin-top:16px"><input type="checkbox" id="tagCats"> Show labels as Outlook categories</label>
+        <div class="hint" style="margin-inline-start:21px">Lets you filter and search your mailbox by label.</div>
+      </div>
+      <div id="tagDetail" hidden>
+        <div class="tag-head">
+          <button class="linkbtn" id="tagBack"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>All labels</button>
+          <span><button class="linkbtn" id="tagRename">Rename</button><button class="linkbtn danger" id="tagDelete">Delete</button></span>
+        </div>
+        <div class="tag-title" id="tagTitle"></div>
+        <div class="hint" id="tagStats"></div>
+        <div class="tag-actions">
+          <button class="btn wide" id="tagAddHere">Add a note to this item with this label</button>
+          <button class="btn wide" id="tagMail">Email a summary of this label</button>
+          <button class="btn wide" id="tagInsert">Insert open items into this email</button>
+        </div>
+        <div id="tagMails"></div>
+      </div>
+    </section>
+
+    <!-- ===== Reports ===== -->
     <section class="view" id="view-sum" hidden>
-      <div class="field-label">Categories</div>
-      <div class="checks" id="sumLabels"></div>
-      <label class="check" style="margin-top:8px"><input type="checkbox" id="sumDueTop"> Show overdue &amp; due today at the top</label>
-
-      <div class="two">
-        <div>
-          <div class="field-label">Period</div>
-          <select class="search" id="sumRange">
-            <option value="today">Today</option>
-            <option value="7">Last 7 days</option>
-            <option value="30">Last 30 days</option>
-            <option value="all">All notes</option>
-          </select>
-        </div>
-        <div>
-          <div class="field-label">Group by</div>
-          <select class="search" id="sumGroup">
-            <option value="label">Category</option>
-            <option value="ref">Document no.</option>
-          </select>
-        </div>
+      <div class="stats" role="group" aria-label="Totals">
+        <div class="stat"><b id="stOpen">0</b><span>Open</span></div>
+        <div class="stat" id="stLateCell"><b id="stLate">0</b><span>Overdue or today</span></div>
+        <div class="stat"><b id="stWait">0</b><span>Awaiting reply</span></div>
+        <div class="stat"><b id="stDone">0</b><span>Done this week</span></div>
       </div>
 
-      <div class="field-label">Document number prefixes</div>
-      <input class="search" id="sumPrefixes" type="text" placeholder="CDF, XWD, E">
-      <div class="hint">Comma separated. Finds numbers like “CDF 740.A” in subjects and notes.</div>
+      <details class="panel" open>
+        <summary><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5l11-5-4.5 11-2-4z"/><path d="M7 9.5l6.5-7"/></svg></span>Summary email<span class="ic chev"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg></span></summary>
+        <div class="panel-body">
+          <div class="flabel">Include</div>
+          <div class="checks" id="sumLabels"></div>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="sumDueTop"> Put overdue and due today first</label>
+          <div class="two">
+            <div><div class="flabel">Period</div>
+              <select class="field" id="sumRange">
+                <option value="today">Today</option><option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option><option value="all">All notes</option>
+              </select></div>
+            <div><div class="flabel">Group by</div>
+              <select class="field" id="sumGroup">
+                <option value="label">Status</option><option value="ref">Document number</option><option value="tag">Label</option>
+              </select></div>
+          </div>
+          <div class="flabel">Document number prefixes</div>
+          <input class="field" id="sumPrefixes" type="text" placeholder="CDF, XWD, E">
+          <div class="hint">Comma separated. Finds numbers like CDF 740.A in subjects, notes and file names.</div>
+          <div class="flabel">Send to</div>
+          <input class="field" id="sumTo" type="text" placeholder="name@company.com">
+          <div class="info" id="sumInfo"></div>
+          <button class="btn primary wide" id="sumGo">Create summary email</button>
+        </div>
+      </details>
 
-      <div class="field-label">Send to</div>
-      <input class="search" id="sumTo" type="text" placeholder="name@company.com">
+      <details class="panel">
+        <summary><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11"/><path d="M4.5 11V8M8 11V4.5M11.5 11V6.5"/></svg></span>Weekly review<span class="ic chev"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg></span></summary>
+        <div class="panel-body">
+          <div class="hint" style="margin:0 0 10px">One email for the week starting Sunday: overdue, due this week, awaiting reply, new and closed notes.</div>
+          <button class="btn wide" id="weekGo">Create weekly review email</button>
+        </div>
+      </details>
 
-      <div class="hint" id="sumInfo" style="margin-top:10px"></div>
-      <div class="actions">
-        <button class="btn primary wide" id="sumGo">Create summary email</button>
-        <button class="btn wide" id="sumCopy">📋 Copy table for Excel</button>
-      </div>
-      <textarea id="copyBox" hidden readonly></textarea>
-      <div class="hint" style="margin-top:8px">The email opens ready to review – just click Send. Your choices are saved for next time.</div>
+      <details class="panel">
+        <summary><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M11 5V3.5a1 1 0 00-1-1H3.5a1 1 0 00-1 1V10a1 1 0 001 1H5"/></svg></span>Copy to Excel<span class="ic chev"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg></span></summary>
+        <div class="panel-body">
+          <div class="hint" style="margin:0 0 8px">Uses the Include and Period settings above. Arrange the columns to match your tracking sheet.</div>
+          <ul class="cols" id="xlCols"></ul>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="xlHeader"> Include a header row</label>
+          <label class="check" style="margin-top:4px"><input type="checkbox" id="xlChanged"> Only notes changed since the last copy</label>
+          <div class="info" id="xlInfo"></div>
+          <button class="btn primary wide" id="sumCopy">Copy table</button>
+          <textarea id="copyBox" hidden readonly aria-label="Table to copy"></textarea>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5a1 1 0 001 1h8a1 1 0 001-1V6"/><path d="M6.5 9h3"/></svg></span>Backup<span class="ic chev"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg></span></summary>
+        <div class="panel-body">
+          <div class="hint" style="margin:0 0 10px">Sends you an email with the overview, labels, quick notes and settings. To restore, open that email with My Notes.</div>
+          <button class="btn wide" id="backupGo">Email me a backup</button>
+        </div>
+      </details>
     </section>
   </main>
 
   <div class="modal" id="modal" hidden>
     <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalText">
-      <div class="modal-title"><span class="warn">⚠</span><span id="modalTitle"></span></div>
+      <div class="modal-title"><span class="modal-ic" id="modalIcon"></span><span id="modalTitle"></span></div>
       <p class="modal-text" id="modalText"></p>
+      <input class="field" id="modalInput" type="text" dir="auto" maxlength="40" hidden>
       <div class="modal-actions">
         <button class="btn" id="modalCancel">Cancel</button>
-        <button class="btn danger" id="modalOk">Delete</button>
+        <button class="btn primary" id="modalOk">OK</button>
       </div>
     </div>
   </div>
-
-  <div class="toast" id="toast"></div>
-  <script src="taskpane.js?v=1.4.0"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="taskpane.js?v=2.0.0"></script>
 </body>
 </html>
