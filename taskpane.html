@@ -278,6 +278,11 @@
     .dots { display: inline-flex; gap: 2px; }
     .dots i { width: 6px; height: 6px; border-radius: 50%; }
     .row-tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+    .sortbar { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+    .sort-k { font-size: 11.5px; color: var(--ink3); }
+    .sortbar select.field { flex: 1; width: auto; padding: 4px 8px; }
+    .sortbar .ibtn { border: 1px solid var(--rule); width: 30px; height: 28px; border-radius: 6px; color: var(--ink2); }
+    .row-sub .sort-hint { margin-inline-start: auto; flex: none; font-size: 11px; color: var(--ink2); font-weight: 500; white-space: nowrap; }
     .store { margin-top: 16px; font-size: 11px; color: var(--ink3); }
     .store .meter-bar { margin-bottom: 5px; }
 
@@ -649,6 +654,11 @@
           <input class="field" id="tagSearch" type="search" dir="auto" placeholder="Search labels">
           <button class="btn" id="tagNew">New label</button>
         </div>
+        <div class="sortbar">
+          <label for="tagSort" class="sort-k">Sort</label>
+          <select class="field" id="tagSort" aria-label="Sort labels"></select>
+          <button class="ibtn" id="tagSortDir" title="Reverse order"></button>
+        </div>
         <div class="stage-bar" id="stageBar" hidden></div>
         <ul class="list" id="tagList"></ul>
         <label class="check" style="margin-top:14px"><input type="checkbox" id="tagByStage"> Group labels by stage</label>
@@ -768,6 +778,6 @@
     </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="taskpane.js?v=3.2.0"></script>
+  <script src="taskpane.js?v=3.3.0"></script>
 </body>
 </html>

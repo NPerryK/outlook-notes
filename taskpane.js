@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.2.0";
+  const VERSION = "3.3.0";
   const PROP_KEY = "mailNotes";          // custom property on the item
   const LBL_KEY = "mailLabels";          // labels on the email itself (no note needed)
   const DKEY_PROP = "mailNotesKey";      // key of a draft, so its notes can be reattached to the sent copy
@@ -173,6 +173,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     send: '<path d="M2.5 7.5l11-5-4.5 11-2-4z"/><path d="M7 9.5l6.5-7"/>',
     list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><path d="M2.5 4h.1M2.5 8h.1M2.5 12h.1"/>',
     search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/>',
+    sortAsc: '<path d="M4.5 12.5v-9M2.5 5.5l2-2 2 2"/><path d="M9 4.5h4.5M9 8h3.5M9 11.5h2.5"/>',
+    sortDesc: '<path d="M4.5 3.5v9M2.5 10.5l2 2 2-2"/><path d="M9 4.5h2.5M9 8h3.5M9 11.5h4.5"/>',
     bell: '<path d="M4 11V7.5a4 4 0 018 0V11l1 1.5H3z"/><path d="M6.5 14a1.6 1.6 0 003 0"/>',
     quote: '<path d="M3 9.5h3v3.5H3zM3 9.5c0-3 1-4.5 3-5"/><path d="M9.5 9.5h3v3.5h-3zM9.5 9.5c0-3 1-4.5 3-5"/>',
     snooze: '<circle cx="6.5" cy="9.5" r="4.5"/><path d="M6.5 7v2.5l1.6 1.2"/><path d="M10 2.5h3.5L10 6h3.5"/>',
@@ -1253,7 +1255,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   function getTagStore() {
     const st = rsGet(TAGS_KEY);
-    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true }, st || {});
+    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "" }, st || {});
   }
   const stageOf = (name, st) => { const k = Object.keys((st || getTagStore()).stages).find((x) => lc(x) === lc(name)); return k ? STAGES.find((g) => g.id === (st || getTagStore()).stages[k]) || null : null; };
   function setStage(name, id) {
@@ -1410,18 +1412,89 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ----- Labels tab -----
   function tagStats() {
     const map = new Map();
-    allTagNames().forEach((t) => map.set(lc(t), { name: t, notes: 0, open: 0, late: 0, mails: new Set(), u: 0 }));
+    allTagNames().forEach((t) => map.set(lc(t), { name: t, notes: 0, open: 0, late: 0, overdue: 0, urgent: 0, mine: 0, theirs: 0, done: 0,
+      maxWait: 0, nextDue: 0, first: 0, mails: new Set(), u: 0, r: 0 }));
     allEntries().forEach((e) => e.tags.forEach((t) => {
       const s = map.get(lc(t));
       if (!s) return;
-      s.mails.add(e.key); s.u = Math.max(s.u, e.v.u || 0);
+      s.mails.add(e.key); s.u = Math.max(s.u, e.v.u || 0); s.r = Math.max(s.r, e.v.r || 0);
+      const start = e.v.r || 0;
+      if (start && (!s.first || start < s.first)) s.first = start;
       notesWithTag(e, t).forEach((n) => {
         s.notes++;
-        if (!isDone(n)) s.open++;
+        const c0 = n.created || n.updated || 0;
+        if (c0 && (!s.first || c0 < s.first)) s.first = c0;
+        if (isDone(n)) { s.done++; return; }
+        if (isInfo(n)) return;
+        s.open++;
+        if (court(n) === "mine") s.mine++; else s.theirs++;
         if (isLate(n)) s.late++;
+        if (dueState(n) === "overdue") s.overdue++;
+        if (statusOf(n.color).hex === URGENT_HEX) s.urgent++;
+        if (n.due && (!s.nextDue || dueTs(n.due) < s.nextDue)) s.nextDue = dueTs(n.due);
+        if (court(n) === "theirs") s.maxWait = Math.max(s.maxWait, waitDays(n));
       });
     }));
     return [...map.values()];
+  }
+
+  // ----- sorting the label list -----
+  // val() gives the sort key; null means "nothing to sort by" and always goes to the bottom, in either direction.
+  const daysSince = (t) => Math.max(0, Math.round((startOfToday() - new Date(t).setHours(0, 0, 0, 0)) / DAY));
+  const stageRank = (s) => (s.stage ? STAGES.findIndex((g) => g.id === s.stage.id) : -1);
+  const TAG_SORTS = [
+    { id: "attention", name: "Needs attention", dir: "desc", val: (s) => [s.late, s.open, s.act] },
+    { id: "name", name: "Name", dir: "asc", val: (s) => s.name },
+    { id: "doc", name: "Document number", dir: "asc", val: (s) => s.doc || null },
+    { id: "activity", name: "Last activity", dir: "desc", val: (s) => s.act || null },
+    { id: "age", name: "Days open", dir: "desc", val: (s) => (s.open && s.first ? daysSince(s.first) : null) },
+    { id: "urgency", name: "Urgency", dir: "desc", val: (s) => (s.open ? [s.overdue, s.late, s.urgent, s.nextDue ? -s.nextDue : -9e15] : null) },
+    { id: "due", name: "Next due date", dir: "asc", val: (s) => s.nextDue || null },
+    { id: "open", name: "Open items", dir: "desc", val: (s) => s.open },
+    { id: "mine", name: "My court", dir: "desc", val: (s) => s.mine || null },
+    { id: "theirs", name: "Longest wait (their court)", dir: "desc", val: (s) => (s.theirs ? [s.maxWait, s.theirs] : null) },
+    { id: "stage", name: "Stage", dir: "asc", val: (s) => (s.stage ? stageRank(s) : null) },
+  ];
+  const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  function cmpVal(a, b) {
+    if (Array.isArray(a)) { for (let i = 0; i < a.length; i++) { const c = cmpVal(a[i], b[i]); if (c) return c; } return 0; }
+    if (typeof a === "string" || typeof b === "string") return natural(a, b);
+    return a - b;
+  }
+  // "CDF 740.A" (or any label with a number in it) → a key that sorts 9 < 10 < 740
+  function docKey(name, pre) {
+    const r = refsOf(name, pre)[0];
+    if (r) return r;
+    const m = /\d[\w.\-/]*/.exec(name);
+    return m ? name : "";
+  }
+  function sortHint(id, s) {
+    const today = startOfToday();
+    switch (id) {
+      case "activity": return s.act ? "Active " + (s.act >= today ? "today" : fmtShort(s.act)) : "";
+      case "age": return s.open && s.first ? "Open " + pl(daysSince(s.first), "day") : "";
+      case "urgency": return s.overdue ? s.overdue + " overdue" : s.late ? "Due today" : s.urgent ? s.urgent + " urgent" : s.nextDue ? "Due " + fmtShort(s.nextDue) : "";
+      case "due": return s.nextDue ? (s.nextDue < today ? "Was due " + fmtShort(s.nextDue) : s.nextDue === today ? "Due today" : "Due " + fmtShort(s.nextDue)) : "";
+      case "mine": return s.mine ? s.mine + " in my court" : "";
+      case "theirs": return s.theirs ? "Waiting " + (s.maxWait ? s.maxWait + " wd" : "since today") : "";
+      case "doc": return s.doc && lc(s.doc) !== lc(s.name) ? s.doc : "";
+      case "open": return s.open ? s.open + " open" : "";
+      default: return "";
+    }
+  }
+  function sortChoice(st) {
+    const def = TAG_SORTS.find((x) => x.id === st.sort) || TAG_SORTS[0];
+    return { def, dir: st.sortDir === "asc" || st.sortDir === "desc" ? st.sortDir : def.dir };
+  }
+  function applySort(stats, st) {
+    const { def, dir } = sortChoice(st);
+    const pre = parsePrefixes((prefsCache || getPrefs()).prefixes);
+    stats.forEach((s) => { s.doc = docKey(s.name, pre); s.act = Math.max(s.u, s.r); s.k = def.val(s); });
+    stats.sort((a, b) => {
+      if (a.k === null || b.k === null) return (a.k === null) - (b.k === null) || natural(a.name, b.name);
+      return (dir === "asc" ? cmpVal(a.k, b.k) : cmpVal(b.k, a.k)) || natural(a.name, b.name);
+    });
+    return { def, dir };
   }
   function renderTags() {
     const detail = !!openTagName;
@@ -1436,21 +1509,28 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const q = lc($("tagSearch").value.trim());
     const list = $("tagList");
     list.innerHTML = "";
-    const stats = tagStats().filter((s) => !q || lc(s.name).includes(q))
-      .sort((a, b) => b.late - a.late || b.open - a.open || b.u - a.u || a.name.localeCompare(b.name));
+    const stats = tagStats().filter((s) => !q || lc(s.name).includes(q));
     stats.forEach((s) => { s.stage = stageOf(s.name, st); });
+    const { def, dir } = applySort(stats, st);
+    $("tagSort").value = def.id;
+    $("tagSortDir").innerHTML = svg(dir === "asc" ? "sortAsc" : "sortDesc", 14);
+    $("tagSortDir").title = (dir === "asc" ? "Ascending" : "Descending") + " – click to reverse";
+    $("tagSortDir").setAttribute("aria-label", $("tagSortDir").title);
     renderStageBar(tagStats().map((s) => stageOf(s.name, st)));
     if (!stats.length) {
       list.appendChild(emptyState(q ? "No labels match your search." : "No labels yet",
         q ? "" : "Labels link notes from different emails. Add one in the label field when you write a note, or create one here."));
       return;
     }
-    const rowEl = (s) => h("li", null, h("button", { class: "row", onclick: () => openTag(s.name) },
-      h("div", { class: "row-top" }, tagChip(s.name),
-        s.late ? h("span", { class: "pill overdue", text: s.late + " late" }) : (!st.byStage && s.stage) ? h("span", { class: "stage-tag", style: "--c:" + s.stage.color, text: s.stage.name }) : null),
-      h("div", { class: "row-sub" }, s.notes
-        ? pl(s.notes, "note") + " on " + pl(s.mails.size, "email") + ", " + s.open + " open"
-        : "No notes yet")));
+    const rowEl = (s) => {
+      const hint = sortHint(def.id, s);
+      return h("li", null, h("button", { class: "row", onclick: () => openTag(s.name) },
+        h("div", { class: "row-top" }, tagChip(s.name),
+          s.late ? h("span", { class: "pill overdue", text: s.late + " late" }) : (!st.byStage && s.stage) ? h("span", { class: "stage-tag", style: "--c:" + s.stage.color, text: s.stage.name }) : null),
+        h("div", { class: "row-sub" },
+          h("span", { text: s.notes ? pl(s.notes, "note") + " on " + pl(s.mails.size, "email") + ", " + (s.open ? s.open + " open" : s.done === s.notes ? "all done" : "none open") : s.mails.size ? pl(s.mails.size, "email") + ", no notes" : "No notes yet" }),
+          hint ? h("span", { class: "sort-hint", text: hint }) : null)));
+    };
     if (!st.byStage) { stats.forEach((s) => list.appendChild(rowEl(s))); return; }
     const groups = STAGES.map((g) => ({ g, items: stats.filter((s) => s.stage && s.stage.id === g.id) }))
       .concat([{ g: { id: "", name: "No stage", color: "#8a94a0" }, items: stats.filter((s) => !s.stage) }]);
@@ -2535,6 +2615,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     });
     inp.addEventListener("change", () => { if (allTagNames().some((t) => lc(t) === lc(inp.value.trim()))) addTagFromInput(); });
     $("tagSearch").addEventListener("input", renderTags);
+    const sel = $("tagSort");
+    TAG_SORTS.forEach((x) => sel.appendChild(h("option", { value: x.id, text: x.name })));
+    sel.onchange = () => { const st = getTagStore(); st.sort = sel.value; st.sortDir = ""; saveTagStore(st); renderTags(); };
+    $("tagSortDir").onclick = () => {
+      const st = getTagStore();
+      st.sortDir = sortChoice(st).dir === "asc" ? "desc" : "asc";
+      saveTagStore(st); renderTags();
+    };
     $("tagNew").onclick = newTag;
     $("tagBack").onclick = () => { openTagName = null; renderTags(); };
     $("tagRename").onclick = renameTag;
