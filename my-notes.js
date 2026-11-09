@@ -10,7 +10,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.3.0";
+  const VERSION = "3.4.0";
+  const cdfLink = window.CdfLink;
+  let cdfStatus = null;
   const PROP_KEY = "mailNotes";          // custom property on the item
   const LBL_KEY = "mailLabels";          // labels on the email itself (no note needed)
   const DKEY_PROP = "mailNotesKey";      // key of a draft, so its notes can be reattached to the sent copy
@@ -375,6 +377,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (rsGet(OLD_IDX_KEY) !== undefined && rsGet(OLD_IDX_KEY) !== null) rsRemove(OLD_IDX_KEY);
     idxCache = idx;
     idxBytes = byteLen(z);
+    publishCdfNotes();
   }
   function indexUsage() {
     getIndex();
@@ -460,6 +463,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     wireUi();
     buildStatusPicker();
     buildSummaryUi();
+    wireCdfLink();
     getIndex(); // migrates the 1.x overview if needed
     loadItem();
     try { MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem); } catch (e) { /* not in compose */ }
@@ -484,6 +488,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         ? item.attachments.filter((a) => !a.isInline && a.name).map((a) => a.name) : [],
     };
     subject = ctx.compose ? "" : item.subject || "";
+    if (cdfLink && item.body) {
+      try {
+        item.body.getAsync(Office.CoercionType.Text, (r) => {
+          if (ok(r) && ctx && ctx.item === item) { ctx.cdfBody = r.value; renderCdfStatus(); }
+        });
+      } catch (e) { /* subjects and labels still identify CDFs */ }
+    }
     person = null;
     if (ctx.compose) {
       item.subject.getAsync((r) => { subject = ok(r) ? r.value || "" : ""; renderHeader(); renderTagComposer(); });
@@ -1993,6 +2004,89 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       document.body.appendChild(ta); ta.select(); const done = document.execCommand("copy"); ta.remove(); return done;
     } catch (e) { return false; }
   }
+  function renderCdfStatus() {
+    if (!cdfLink) return;
+    const card = $("cdfStatusCard"), list = $("cdfStatusRows");
+    const text = ctx ? [subject, ctx.cdfBody, ...emailTags, ...ctx.attachments, ...notes.map((n) => n.text)].join("\n") : "";
+    const refs = cdfLink.refs(text);
+    card.hidden = !refs.length || !cdfStatus;
+    list.replaceChildren();
+    if (card.hidden) return;
+    cdfLink.statusFor(refs, cdfStatus).forEach((r) => {
+      const row = h("div", { class: "cdf-status-row" });
+      row.append(h("strong", {}, r.key), h("div", {}, r.missing ? "Missing from the Excel snapshot" :
+        [r.status, r.station, r.signature].filter(Boolean).join(" · ") || "No status yet"));
+      if (r.notes && r.notes.trim()) {
+        const note = h("div", { class: "cdf-excel-note", dir: "auto" }, r.notes);
+        row.append(h("small", {}, "CDF Notes · column E"), note);
+      }
+      list.append(row);
+    });
+  }
+  function adoptCdfStatus() {
+    if (!cdfLink) return;
+    const shared = cdfLink.readShared(window.localStorage, cdfLink.LS_STATUS, cdfLink.KIND_STATUS);
+    cdfStatus = cdfLink.newer(cdfStatus, shared);
+    $("cdfSyncMessage").textContent = cdfStatus
+      ? cdfStatus.rows.length + " CDFs · " + new Date(cdfStatus.at).toLocaleString()
+      : "Copy CDF status from Excel and paste it here.";
+    renderCdfStatus();
+  }
+  function takeCdfStatus(text) {
+    const result = cdfLink.decode(text, cdfLink.KIND_STATUS);
+    if (!result.ok) { $("cdfSyncMessage").textContent = result.error; return; }
+    cdfStatus = cdfLink.newer(cdfStatus, result.data);
+    cdfLink.writeShared(window.localStorage, cdfLink.LS_STATUS, cdfLink.encode(cdfLink.KIND_STATUS, cdfStatus));
+    $("cdfStatusPaste").value = "";
+    adoptCdfStatus();
+    publishCdfNotes();
+  }
+  function publishCdfNotes() {
+    if (!cdfLink || !cdfStatus) return "";
+    const output = [];
+    allEntries().forEach((entry) => {
+      const mail = entry.v;
+      entry.notes.forEach((n) => {
+        if (!n.text.trim()) return;
+        const body = entry.key === currentKey() ? ctx.cdfBody : "";
+        const refs = cdfLink.refs([mail.s, body, ...entry.labels, ...n.tags, n.att, n.text].join("\n"));
+        if (!refs.length) return;
+        output.push({ refs: refs.map((r) => r.label), text: n.text, state: isDone(n) ? "Done" : isInfo(n) ? "Info" : "Open",
+          cat: statusOf(n.color).short, due: n.due, updated: n.updated, subject: mail.s, from: mail.f, received: mail.r });
+      });
+    });
+    const text = cdfLink.encode(cdfLink.KIND_NOTES, { at: new Date().toISOString(), notes: output });
+    cdfLink.writeShared(window.localStorage, cdfLink.LS_NOTES, text);
+    return text;
+  }
+  function wireCdfLink() {
+    if (!cdfLink) return;
+    const paste = $("cdfStatusPaste"), message = $("cdfSyncMessage");
+    $("cdfStatusRead").onclick = () => takeCdfStatus(paste.value);
+    $("cdfNotesCopy").onclick = async () => {
+      if (!cdfStatus) { message.textContent = "Read the Excel CDF status first."; return; }
+      const text = publishCdfNotes();
+      const output = $("cdfNotesOutput");
+      output.hidden = await copyPlain(text);
+      if (!output.hidden) { output.value = text; output.focus(); output.select(); }
+      message.textContent = output.hidden ? "Copied. Paste into CDF Updater in Excel." : "Press Ctrl+C, then paste into CDF Updater in Excel.";
+    };
+    document.addEventListener("paste", (ev) => {
+      const text = ev.clipboardData && ev.clipboardData.getData("text/plain");
+      if (cdfLink.kindOf(text) !== cdfLink.KIND_STATUS) return;
+      if (ev.target !== paste && ev.target.closest?.("input, textarea, [contenteditable=true]")) return;
+      ev.preventDefault();
+      takeCdfStatus(text);
+      if (!ctx || !cdfLink.refs(subject).length) { switchTab("sum"); paste.closest("details").open = true; }
+    });
+    window.addEventListener("storage", (ev) => {
+      if (ev.key === cdfLink.LS_STATUS) { adoptCdfStatus(); publishCdfNotes(); }
+    });
+    window.addEventListener("focus", adoptCdfStatus);
+    adoptCdfStatus();
+    publishCdfNotes();
+  }
+
   function sendNew(subj, html, to) {
     const opts = { subject: subj, htmlBody: html };
     if (to) opts.toRecipients = to.split(/[;,\s]+/).filter(Boolean);
@@ -2168,6 +2262,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (tab === "sum") renderSummaryInfo();
   }
   function renderHeader() {
+    renderCdfStatus();
     const kind = !ctx ? "note" : ctx.meeting ? "cal" : ctx.compose ? "compose" : "mail";
     $("tbIcon").innerHTML = svg(kind, 15);
     $("subject").textContent = !ctx ? "Select an email to see its notes" : subject || (ctx.meeting ? "(no title)" : ctx.compose ? "(new email)" : "(no subject)");

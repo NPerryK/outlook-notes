@@ -473,6 +473,9 @@
       .checks { grid-template-columns: 1fr; }
       .st { font-size: 11px; padding-inline: 1px; }
     }
+    .cdf-sync-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
+    .cdf-status-row { margin-block: 8px; }
+    .cdf-excel-note { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -518,6 +521,10 @@
   <main>
     <!-- ===== This item ===== -->
     <section class="view" id="view-item">
+      <div class="callout neutral" id="cdfStatusCard" hidden>
+        <div class="callout-title">CDF status · Excel</div>
+        <div id="cdfStatusRows"></div>
+      </div>
       <div class="callout" id="replyBox" hidden>
         <div class="callout-title"><span class="ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4L3 7.5 6.5 11"/><path d="M3 7.5h6a4 4 0 014 4v1"/></svg></span>Reply received</div>
         <p>You were waiting for a reply in this thread:</p>
@@ -689,6 +696,16 @@
 
     <!-- ===== Reports ===== -->
     <section class="view" id="view-sum" hidden>
+      <details class="callout neutral">
+        <summary class="callout-title">CDF status</summary>
+        <p id="cdfSyncMessage" role="status">Copy CDF status from Excel and paste it here.</p>
+        <textarea id="cdfStatusPaste" class="field" rows="3" aria-label="CDF status from Excel" placeholder="Paste CDF status from Excel"></textarea>
+        <div class="cdf-sync-actions">
+          <button id="cdfStatusRead" class="btn sm" type="button">Read Excel status</button>
+          <button id="cdfNotesCopy" class="btn sm" type="button">Copy Outlook notes for Excel</button>
+        </div>
+        <textarea id="cdfNotesOutput" class="field" rows="3" aria-label="Outlook notes to copy" readonly hidden></textarea>
+      </details>
       <div class="stats" role="group" aria-label="Totals">
         <div class="stat"><b id="stOpen">0</b><span>Open</span></div>
         <div class="stat" id="stLateCell"><b id="stLate">0</b><span>Overdue or today</span></div>
@@ -778,6 +795,7 @@
     </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="my-notes.js?v=3.3.0"></script>
+  <script src="cdf-link.js?v=3.4.0"></script>
+  <script src="my-notes.js?v=3.4.0"></script>
 </body>
 </html>
