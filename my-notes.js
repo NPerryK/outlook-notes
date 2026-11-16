@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.5.0";
+  const VERSION = "3.6.0";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -477,7 +477,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // localStorage throws in some Outlook windows (blocked storage); treat that as "no storage"
   function localStore() { try { return window.localStorage; } catch (e) { return null; } }
 
-  let loadSeq = 0, loadTimer = 0, emptyChecks = 0, propsSeq = -1;
+  let loadSeq = 0, loadTimer = 0, emptyChecks = 0, propsSeq = -1, editAfterLoad = null;
   function loadItem() {
     const item = MB().item;
     const seq = ++loadSeq;
@@ -607,6 +607,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!ctx.compose && !ctx.meeting && !notes.length && !emailTags.length) recoverDraftNotes();
       if (!ctx.compose && !ctx.meeting) { autoLabel(); detectRequests(); }
       renderHandover();
+      safely("editAfterLoad", () => {
+        const ls = localStore();
+        if (!editAfterLoad && ls) { const x = JSON.parse(ls.getItem("myNotesEdit") || "null"); if (x && Date.now() - x.at < 5 * 60000 && notes.some((n) => n.id === x.id)) editAfterLoad = x.id; }
+        if (editAfterLoad && notes.some((n) => n.id === editAfterLoad)) { const id = editAfterLoad; editAfterLoad = null; if (ls) ls.removeItem("myNotesEdit"); editNote(id); }
+        editAfterLoad = null;
+      });
     }
   }
 
@@ -726,6 +732,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (p.done && !isDone(n)) {
         n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = p.at; n.updated = p.at; notesChanged = true;
       }
+      if (p.reopen && isDone(n)) {
+        n.color = n.prev && n.prev !== DONE_HEX ? n.prev : NOTE_HEX; delete n.prev; delete n.doneAt; n.updated = p.at; notesChanged = true;
+      }
+      if (p.edit && Date.now() - (p.at || 0) < 15 * 60000) editAfterLoad = n.id;
       delete pend[n.id];
       pendChanged = true;
     });
@@ -1041,7 +1051,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const apply = (n) => {
       if (patch.due !== undefined) n.due = patch.due;
       if (patch.color && !isDone(n)) { n.color = patch.color; n.since = patch.color === WAIT_HEX ? now : undefined; }
-      if (patch.done) { n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = now; }
+      if (patch.done && !isDone(n)) { n.prev = statusOf(n.color).hex; n.color = DONE_HEX; n.doneAt = now; }
+      if (patch.reopen && isDone(n)) { n.color = n.prev && n.prev !== DONE_HEX ? n.prev : NOTE_HEX; delete n.prev; delete n.doneAt; if (isWait(n)) n.since = now; }
       n.updated = now;
     };
     if (ctx && e.key === currentKey()) {
@@ -1208,20 +1219,40 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Auto-label: put an email in a label's dossier when its subject has the document number
   // ===================================================================
+  // ...and when an earlier email in the same conversation has a label, replies get it too.
   function autoLabel() {
     const st = getTagStore();
     if (!st.autoLabel || !props) return;
+    const add = [], why = [];
+    const take = (t, reason) => {
+      if (t && !emailTags.some((x) => lc(x) === lc(t)) && !lblOff.some((x) => lc(x) === lc(t)) && !add.some((x) => lc(x) === lc(t))) { add.push(t); why.push(reason); }
+    };
     const src = (subject || "") + " " + ctx.attachments.join(" ");
-    const refs = refsOf(src, parsePrefixes((prefsCache || getPrefs()).prefixes));
-    if (!refs.length) return;
     const names = allTagNames();
-    const add = [];
-    refs.forEach((r) => {
-      const t = names.find((x) => lc(x) === lc(r));
-      if (t && !emailTags.some((x) => lc(x) === lc(t)) && !lblOff.some((x) => lc(x) === lc(t)) && !add.includes(t)) add.push(t);
-    });
+    refsOf(src, parsePrefixes((prefsCache || getPrefs()).prefixes)).forEach((r) => take(names.find((x) => lc(x) === lc(r)), "subject"));
+    threadLabels().forEach((t) => take(t, "thread"));
     if (!add.length) return;
-    changeEmailTags(() => { add.forEach((t) => emailTags.push(t)); }, "Added to " + add.join(", "));
+    changeEmailTags(() => { add.forEach((t) => emailTags.push(t)); },
+      "Added to " + add.join(", ") + (why.every((w) => w === "thread") ? " – same thread" : ""));
+  }
+  // labels already on other emails of this conversation (email labels and note labels)
+  function threadLabels() {
+    if (!ctx || !ctx.conv) return [];
+    const key = currentKey(), out = [];
+    allEntries().forEach((e) => { if (e.v.cv === ctx.conv && e.key !== key) e.tags.forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); }); });
+    return out;
+  }
+  // the newest email we know of in an email's conversation (the email itself when it is the newest)
+  function latestInThread(e) {
+    if (!e || !e.v.cv) return e;
+    let best = e;
+    allEntries().forEach((x) => { if (x.v.cv === e.v.cv && !x.v.draft && (x.v.r || 0) > (best.v.r || 0)) best = x; });
+    return best;
+  }
+  function openLatest(e) {
+    const l = latestInThread(e);
+    openEmail(l.id);
+    if (l !== e) toast("Opened the latest email in this thread");
   }
 
   // ===================================================================
@@ -1639,8 +1670,27 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("railToggle").onclick = () => { const st = getTagStore(); st.rail = st.rail === false; saveTagStore(st); renderRail(); };
     $("railOpen").onclick = () => { const st = getTagStore(); st.rail = true; saveTagStore(st); renderRail(); };
     $("railAll").onclick = () => { openTagName = null; switchTab("tag"); renderRail(); };
+    const grip = $("railGrip");
+    const maxW = () => Math.max(RAIL_MIN, Math.min(RAIL_MAX, window.innerWidth - 230));
+    const setW = (w) => { w = Math.round(Math.max(RAIL_MIN, Math.min(maxW(), w))); document.documentElement.style.setProperty("--railw", w + "px"); return w; };
+    const saveW = (w) => { const st = getTagStore(); st.railW = w; saveTagStore(st); };
+    let dragging = false, lastW = 0;
+    grip.onpointerdown = (ev) => {
+      ev.preventDefault(); dragging = true; lastW = 0;
+      try { grip.setPointerCapture(ev.pointerId); } catch (x) { /* ignore */ }
+      document.body.classList.add("rail-drag");
+    };
+    grip.onpointermove = (ev) => { if (dragging) lastW = setW(ev.clientX); };
+    const end = () => { if (!dragging) return; dragging = false; document.body.classList.remove("rail-drag"); if (lastW) saveW(lastW); };
+    grip.onpointerup = end; grip.onpointercancel = end;
+    grip.ondblclick = () => saveW(setW(RAIL_DEF));
+    grip.onkeydown = (ev) => {
+      const cur = getTagStore().railW || RAIL_DEF;
+      if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") { ev.preventDefault(); saveW(setW(cur + (ev.key === "ArrowRight" ? 12 : -12))); }
+    };
     renderRail();
   }
+  const RAIL_MIN = 72, RAIL_MAX = 320, RAIL_DEF = 92;
   function railState(s) {
     if (s.overdue || s.late) return { c: "late", t: s.overdue ? s.overdue + " overdue" : "Due today" };
     if (s.mine) return { c: "mine", t: s.mine + " mine" };
@@ -1656,6 +1706,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     document.body.classList.toggle("rail-on", on);
     document.body.classList.toggle("rail-min", !on);
     if (!on) return;
+    const w = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.min(st.railW || RAIL_DEF, Math.max(RAIL_MIN, window.innerWidth - 230))));
+    document.documentElement.style.setProperty("--railw", w + "px");
+    $("railGrip").setAttribute("aria-valuenow", w);
     const stats = tagStats();
     stats.forEach((s) => { s.stage = stageOf(s.name, st); });
     applySort(stats, st);
@@ -1729,6 +1782,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     // timeline: newest first
     const box = $("tagMails");
     box.innerHTML = "";
+    const newest = rows.slice().sort((a, b) => (b.e.v.r || b.e.v.u || 0) - (a.e.v.r || a.e.v.u || 0))[0];
+    if (newest) {
+      const l = latestInThread(newest.e);
+      box.appendChild(h("button", { class: "latest", title: "Open the latest email of this label", onclick: () => openEmail(l.id) },
+        h("span", { class: "latest-k", text: "Latest email" }),
+        h("span", { class: "latest-s" }, ic(l.v.mt ? "cal" : "mail", 13), h("bdi", { text: l.v.s || "(no subject)" })),
+        h("span", { class: "latest-m muted", text: [l.v.f, fmtShort(l.v.r || l.v.u || Date.now())].filter(Boolean).join(" · ") })));
+    }
     if (rows.length) box.appendChild(h("div", { class: "flabel", style: "margin:14px 0 6px", text: "Timeline" }));
     const tl = h("ol", { class: "timeline" });
     rows.slice().sort((a, b) => (b.e.v.r || b.e.v.u || 0) - (a.e.v.r || a.e.v.u || 0)).forEach((r) => {
@@ -1749,11 +1810,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (!list.length) block.appendChild(h("div", { class: "mnote-empty muted small", text: "Labeled, no notes" }));
     list.slice().sort((a, b) => isDone(a) - isDone(b) || b.updated - a.updated).forEach((n) => {
       const st = statusOf(n.color), ds = dueState(n);
-      block.appendChild(h("div", { class: "mnote" + (isDone(n) ? " done" : ""), style: "--c:" + st.hex },
+      block.appendChild(wireRemoteNote(h("div", { class: "mnote" + (isDone(n) ? " done" : ""), style: "--c:" + st.hex },
         h("div", { class: "note-text", dir: "auto", text: n.text }),
         h("div", { class: "mnote-meta" }, h("span", { class: "st-mini" }, h("i", { style: "background:" + st.hex }), st.short),
           h("span", { class: "muted", text: fmtShort(n.updated) }), ds ? h("span", { class: "pill " + ds, text: dueText(n) }) : null, waitChip(n),
-          n.who && court(n) === "mine" ? h("span", { class: "asker", html: svg("user", 10) + "<bdi>" + esc(n.who) + "</bdi>" }) : null)));
+          n.who && court(n) === "mine" ? h("span", { class: "asker", html: svg("user", 10) + "<bdi>" + esc(n.who) + "</bdi>" }) : null)), e, n));
     });
     return block;
   }
@@ -2454,11 +2515,62 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         onclick: () => { openHist.has(n.id) ? openHist.delete(n.id) : openHist.add(n.id); renderNotes(); } }) : null,
       actions);
     li.appendChild(foot);
+    li.title = "Double-click to edit · right-click for more";
+    li.ondblclick = (ev) => {
+      if (ev.target.closest("button, a, input, textarea, select")) return;
+      try { window.getSelection().removeAllRanges(); } catch (x) { /* ignore */ }
+      editNote(n.id);
+    };
+    li.oncontextmenu = (ev) => { if (ev.target.closest("input, textarea")) return; ev.preventDefault(); localNoteMenu(ev, n); };
     if (n.hist && n.hist.length && openHist.has(n.id)) {
       li.appendChild(h("ol", { class: "hist" }, n.hist.map((x) => h("li", null,
         h("div", { class: "note-text", dir: "auto", text: x.t }), h("div", { class: "muted small", text: "Written " + fmtDate(x.u) })))));
     }
     return li;
+  }
+  // ----- right-click menus -----
+  const at = (ev) => ({ getBoundingClientRect: () => ({ left: ev.clientX, right: ev.clientX, top: ev.clientY, bottom: ev.clientY }) });
+  function localNoteMenu(ev, n) {
+    const done = isDone(n), find = () => notes.find((y) => y.id === n.id);
+    const items = [{ label: "Edit", hint: "Double-click", onClick: () => editNote(n.id) }];
+    if (!isInfo(n)) items.push({ label: done ? "Reopen" : "Mark as done", onClick: () => toggleDone(n.id) });
+    if (court(n) === "mine") items.push({ label: "Hand over", hint: "waiting for them", onClick: () => mutate(() => { const x = find(); if (x) { x.color = WAIT_HEX; x.since = Date.now(); x.updated = Date.now(); } }, "Moved to their court") });
+    else if (court(n) === "theirs") items.push({ label: "Back to my court", onClick: () => mutate(() => { const x = find(); if (x) { x.color = NOTE_HEX; x.since = undefined; x.updated = Date.now(); } }, "Back in your court") });
+    if (!done && !isInfo(n)) items.push({ label: n.due ? "Move the due date…" : "Set a due date…", onClick: () => snoozeMenu(at(ev), n.due,
+      (v) => mutate(() => { const x = find(); if (x) { x.due = v; x.updated = Date.now(); } }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed")) });
+    items.push({ label: "Copy text", onClick: () => copyPlain(n.text).then((okk) => toast(okk ? "Note copied" : "Couldn't copy")) });
+    items.push({ label: "Delete", danger: true, onClick: () => deleteNote(n.id) });
+    popover(at(ev), items);
+  }
+  // a note on another email: done/reopen/due here, editing opens that email
+  function remoteEdit(e, n) {
+    const pend = rsGet(PEND_KEY) || {};
+    pend[n.id] = Object.assign({}, pend[n.id] || {}, { edit: 1, at: Date.now() });
+    rsSet(PEND_KEY, pend);
+    safely("editFlag", () => { const ls = localStore(); if (ls) ls.setItem("myNotesEdit", JSON.stringify({ id: n.id, at: Date.now() })); });
+    toast("Opening the email to edit the note…");
+    setTimeout(() => openEmail(e.id), 700); // give Outlook a moment to save the request first
+  }
+  function remoteNoteMenu(ev, e, n) {
+    const done = isDone(n);
+    const items = [{ label: "Edit", hint: "opens the email", onClick: () => remoteEdit(e, n) }];
+    if (!isInfo(n)) items.push({ label: done ? "Reopen" : "Mark as done", onClick: () => remoteUpdate(e, n.id, done ? { reopen: 1, done: 0 } : { done: 1, reopen: 0 }, done ? "Note reopened" : "Marked as done") });
+    if (!done && !isInfo(n)) {
+      items.push(court(n) === "mine" ? { label: "Hand over", hint: "waiting for them", onClick: () => handOver(e, n) } : { label: "Back to my court", onClick: () => backToMe(e, n) });
+      items.push({ label: n.due ? "Move the due date…" : "Set a due date…", onClick: () => snoozeMenu(at(ev), n.due,
+        (v) => remoteUpdate(e, n.id, { due: v }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed")) });
+    }
+    items.push({ label: "Open this email", onClick: () => openEmail(e.id) });
+    const l = latestInThread(e);
+    if (l !== e) items.push({ label: "Open the latest email", hint: fmtShort(l.v.r || l.v.u), onClick: () => openEmail(l.id) });
+    items.push({ label: "Copy text", onClick: () => copyPlain(n.text).then((okk) => toast(okk ? "Note copied" : "Couldn't copy")) });
+    popover(at(ev), items);
+  }
+  function wireRemoteNote(el, e, n) {
+    el.oncontextmenu = (ev) => { ev.preventDefault(); remoteNoteMenu(ev, e, n); };
+    el.ondblclick = (ev) => { if (ev.target.closest("button, a")) return; remoteEdit(e, n); };
+    el.title = "Double-click to edit · right-click for more";
+    return el;
   }
   function waitChip(n) {
     if (!isWait(n) || isDone(n)) return null;
@@ -2472,7 +2584,22 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       h("div", { class: "empty-art", html: iconName === "check" ? svg("check", 22) : svg("note", 22) }),
       h("div", { class: "empty-title", text: title }), text ? h("div", { class: "empty-text", text }) : null);
   }
+  function renderNewer() {
+    const box = $("newerBox");
+    if (!box) return;
+    box.hidden = true;
+    if (!ctx || ctx.compose || ctx.meeting || !ctx.conv) return;
+    const key = currentKey();
+    const mine = { key, v: { cv: ctx.conv, r: ctx.received || 0 } };
+    const l = latestInThread(mine);
+    if (!l || l === mine || l.key === key || (l.v.r || 0) <= (ctx.received || 0) + 60000) return;
+    box.hidden = false;
+    box.innerHTML = "";
+    box.appendChild(h("button", { class: "newer", title: "Open the newer email", onclick: () => openEmail(l.id) },
+      ic("reply", 13), h("span", { text: "Newer in this thread: " }), h("bdi", { text: (l.v.f ? l.v.f + ", " : "") + fmtShort(l.v.r) })));
+  }
   function renderThread() {
+    safely("newer", renderNewer);
     const wrap = $("threadWrap");
     const th = threadEntries();
     const thN = th.reduce((s, e) => s + e.notes.length, 0);
@@ -2633,7 +2760,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const row = h("div", { class: "trow", style: "--c:" + st.hex });
     row.appendChild(h("div", { class: "note-text", dir: "auto", text: n.text }));
     row.appendChild(h("div", { class: "trow-meta" },
-      h("button", { class: "trow-subj", title: "Open " + (e.v.mt ? "meeting" : "email"), onclick: () => openEmail(e.id) },
+      h("button", { class: "trow-subj", title: e.v.mt ? "Open meeting" : "Open the latest email in this thread", onclick: () => openLatest(e) },
         ic(e.v.mt ? "cal" : "mail", 12), h("bdi", { text: e.v.s })),
       ds ? h("span", { class: "due " + ds, text: dueText(n) }) : null, waitChip(n),
       h("span", { class: "trow-actions" },
@@ -2642,6 +2769,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           : iconBtn("undo", "Back to my court – their answer needs work from me", () => backToMe(e, n)),
         iconBtn("snooze", n.due ? "Move the due date" : "Set a due date", (ev) => snoozeMenu(ev.currentTarget, n.due,
           (v) => remoteUpdate(e, n.id, { due: v }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed"))))));
+    wireRemoteNote(row, e, n);
     if (n.who && court(n) === "mine") row.querySelector(".trow-meta").insertBefore(h("span", { class: "asker", title: n.who + " asked for this", html: svg("user", 11) + "<bdi>" + esc(n.who) + "</bdi>" }), row.querySelector(".trow-meta").children[1] || null);
     return row;
   }
@@ -2679,7 +2807,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const latest = (open.length ? open : e.notes).slice().sort((x, y) => y.updated - x.updated)[0];
       const tags = e.tags.slice(0, 3);
       const dots = [...new Set(e.notes.map((n) => statusOf(n.color).hex))];
-      list.appendChild(h("li", null, h("button", { class: "row", title: "Open", onclick: () => openEmail(e.id) },
+      list.appendChild(h("li", null, h("button", { class: "row", title: "Open the latest email in this thread", onclick: () => openLatest(e) },
         h("div", { class: "row-top" },
           h("span", { class: "row-subj" }, ic(e.v.mt ? "cal" : e.v.draft ? "compose" : "mail", 13), h("bdi", { text: e.v.s })),
           fd ? h("span", { class: "pill " + dueState(fd), text: dueText(fd) }) : null),

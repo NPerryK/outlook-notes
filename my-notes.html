@@ -500,6 +500,24 @@
     .rail-item.active { background: var(--blue-soft); }
     .rail-item.active .rail-name { font-weight: 600; color: var(--blue-ink); }
     .rail-empty { padding: 8px 9px; font-size: 11px; color: var(--ink3); }
+    .rail-grip { position: absolute; inset-block: 0; inset-inline-end: -4px; width: 8px; cursor: ew-resize; touch-action: none; z-index: 6; }
+    .rail-grip::after { content: ""; position: absolute; inset-block: 0; inset-inline-start: 3px; width: 2px; background: transparent; transition: background .12s; }
+    .rail-grip:hover::after, .rail-grip:focus-visible::after, body.rail-drag .rail-grip::after { background: var(--blue); }
+    .rail-grip:focus-visible { outline: none; }
+    body.rail-drag, body.rail-drag * { cursor: ew-resize !important; user-select: none; }
+    /* latest email of a label, newer email in this thread */
+    .latest { display: grid; gap: 2px; width: 100%; margin-top: 12px; padding: 8px 10px; text-align: start; border: 1px solid var(--frame); border-inline-start: 3px solid var(--blue);
+      border-radius: 6px; background: var(--sheet); color: var(--ink); }
+    .latest:hover { background: var(--rule2); }
+    .latest-k { font-size: 11px; color: var(--ink3); }
+    .latest-s { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; min-width: 0; }
+    .latest-s bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .latest-m { font-size: 11.5px; }
+    .newer-box { margin: 0 0 10px; }
+    .newer { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 1px dashed var(--blue); border-radius: 6px; background: var(--blue-soft);
+      color: var(--blue-ink); font-size: 12px; text-align: start; }
+    .newer bdi { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #notes .note { cursor: default; }
     .rail-open { display: none; position: fixed; inset-block-start: 8px; inset-inline-start: 0; z-index: 5; align-items: center; gap: 2px;
       writing-mode: vertical-rl; padding: 8px 2px; border: 1px solid var(--rule); border-inline-start: 0; border-radius: 0 6px 6px 0;
       background: var(--sheet); color: var(--ink2); font-size: 11px; }
@@ -531,6 +549,7 @@
       <button class="ibtn sm" id="railToggle" title="Hide the label list" aria-label="Hide the label list"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button>
     </div>
     <ul class="rail-list" id="railList"></ul>
+    <div class="rail-grip" id="railGrip" role="separator" aria-orientation="vertical" aria-label="Resize the label list" aria-valuemin="72" aria-valuemax="320" tabindex="0" title="Drag to resize · double-click to reset"></div>
   </aside>
   <button class="rail-open" id="railOpen" title="Show the label list" aria-label="Show the label list"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg><span>Labels</span></button>
   <div class="app">
@@ -673,6 +692,7 @@
         <ul class="notes" id="doneNotes" hidden></ul>
       </div>
 
+      <div class="newer-box" id="newerBox" hidden></div>
       <div class="section" id="threadWrap" hidden>
         <button class="sec-toggle" id="threadToggle" aria-expanded="true"></button>
         <div id="threadBody"></div>
@@ -854,6 +874,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.5.0"></script>
+  <script src="my-notes.js?v=3.6.0"></script>
 </body>
 </html>
