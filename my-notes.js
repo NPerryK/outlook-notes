@@ -10,9 +10,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.4.0";
+  const VERSION = "3.5.0";
   const cdfLink = window.CdfLink;
-  let cdfStatus = null;
+  let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
   const LBL_KEY = "mailLabels";          // labels on the email itself (no note needed)
   const DKEY_PROP = "mailNotesKey";      // key of a draft, so its notes can be reattached to the sent copy
@@ -377,7 +377,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (rsGet(OLD_IDX_KEY) !== undefined && rsGet(OLD_IDX_KEY) !== null) rsRemove(OLD_IDX_KEY);
     idxCache = idx;
     idxBytes = byteLen(z);
-    publishCdfNotes();
+    clearTimeout(cdfPubTimer);
+    cdfPubTimer = setTimeout(() => safely("cdfNotes", publishCdfNotes), 600);
   }
   function indexUsage() {
     getIndex();
@@ -458,26 +459,44 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Current item: load, save
   // ===================================================================
+  // One failing part of the start-up must never leave the pane empty, so each step runs on its own.
+  function safely(name, fn) {
+    try { return fn(); } catch (e) { try { console.error("My Notes: " + name + " failed", e); } catch (x) { /* no console */ } return undefined; }
+  }
   Office.onReady((info) => {
     if (info.host !== Office.HostType.Outlook) return;
-    wireUi();
-    buildStatusPicker();
-    buildSummaryUi();
-    wireCdfLink();
-    getIndex(); // migrates the 1.x overview if needed
-    loadItem();
-    try { MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem); } catch (e) { /* not in compose */ }
+    safely("ItemChanged", () => MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem));
+    safely("wireUi", wireUi);
+    safely("statusPicker", buildStatusPicker);
+    safely("summaryUi", buildSummaryUi);
+    safely("rail", wireRail);
+    safely("index", getIndex); // migrates the 1.x overview if needed
+    safely("loadItem", loadItem);
+    setTimeout(() => safely("cdfLink", wireCdfLink), 0); // optional; must not delay the notes
   });
+  // localStorage throws in some Outlook windows (blocked storage); treat that as "no storage"
+  function localStore() { try { return window.localStorage; } catch (e) { return null; } }
 
+  let loadSeq = 0, loadTimer = 0, emptyChecks = 0, propsSeq = -1;
   function loadItem() {
     const item = MB().item;
+    const seq = ++loadSeq;
+    clearTimeout(loadTimer);
     editingId = null; composeId = null; showDone = false; replyCands = []; backupFound = null; requests = []; reqMore = false;
     openHist.clear();
+    setLoading(false);
     if (!item) {
       ctx = null; notes = []; emailTags = []; props = null; subject = "";
-      resetComposer(); renderAll();
+      safely("reset", resetComposer); safely("render", renderAll);
+      // Opening an email from the pane can briefly leave no item selected; look again before giving up.
+      const recheck = () => {
+        if (seq !== loadSeq || emptyChecks >= 4) return;
+        loadTimer = setTimeout(() => { if (seq !== loadSeq) return; if (MB().item) loadItem(); else recheck(); }, [500, 1200, 2500, 5000][emptyChecks++]);
+      };
+      recheck();
       return;
     }
+    emptyChecks = 0;
     const meeting = item.itemType === "appointment" ||
       (Office.MailboxEnums && Office.MailboxEnums.ItemType && item.itemType === Office.MailboxEnums.ItemType.Appointment);
     ctx = {
@@ -519,8 +538,52 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (po) { ctx.cp = po.name; ctx.ca = other.emailAddress || ""; }
     }
     if (!ctx.compose) { try { ctx.received = item.dateTimeCreated ? new Date(item.dateTimeCreated).getTime() : 0; } catch (e) { ctx.received = 0; } }
-    item.loadCustomPropertiesAsync((res) => {
-      if (!ok(res)) { toast("Couldn't load notes for this item"); return; }
+    props = null;
+    previewFromIndex();
+    loadProps(item, seq, 0);
+  }
+  // Shows what the overview already knows about this email right away, read-only, while Outlook loads the real notes.
+  function previewFromIndex() {
+    notes = []; emailTags = [];
+    safely("preview", () => {
+      const key = ctx.compose ? null : ctx.item.internetMessageId || ctx.item.itemId;
+      const v = key && getIndex()[key];
+      if (v) { notes = entryNotes(v).filter((n) => n.id); emailTags = (v.lb || []).slice(); }
+    });
+    setLoading(true);
+    safely("reset", resetComposer);
+    safely("render", renderAll);
+  }
+  function setLoading(on, failed) {
+    document.body.classList.toggle("is-loading", !!on || !!failed); // read-only until the real notes are in
+    const box = $("loadBox");
+    if (!box) return;
+    box.hidden = !on && !failed;
+    box.classList.toggle("failed", !!failed);
+    $("loadText").textContent = failed ? "Outlook didn't return this email's notes." : "Loading notes…";
+    $("loadRetry").hidden = !failed;
+  }
+  const LOAD_WAIT = (window.__TEST__ && window.__LOADWAIT) || [5000, 6000, 8000];
+  function loadProps(item, seq, attempt) {
+    let answered = false;
+    const retry = (why) => {
+      if (seq !== loadSeq || propsSeq === seq) return;
+      if (attempt + 1 < LOAD_WAIT.length) loadTimer = setTimeout(() => loadProps(item, seq, attempt + 1), 400 * (attempt + 1));
+      else { setLoading(false, true); safely("log", () => console.warn("My Notes: custom properties not loaded", why)); }
+    };
+    const timer = setTimeout(() => { if (!answered) { answered = true; retry("timeout"); } }, LOAD_WAIT[attempt]);
+    try {
+      item.loadCustomPropertiesAsync((res) => {
+        if (seq !== loadSeq || propsSeq === seq) { clearTimeout(timer); return; } // another email was opened, or already loaded
+        if (!ok(res)) { if (answered) return; answered = true; clearTimeout(timer); retry(res.error && res.error.message); return; }
+        answered = true; clearTimeout(timer); propsSeq = seq; clearTimeout(loadTimer); // a late answer still counts
+        setLoading(false);
+        safely("props", () => gotProps(res));
+      });
+    } catch (e) { answered = true; clearTimeout(timer); retry(e && e.message); }
+  }
+  function gotProps(res) {
+    {
       props = res.value;
       notes = decodeNotes(props.get(PROP_KEY));
       draftKey = ctx.compose ? props.get(DKEY_PROP) || null : null;
@@ -544,7 +607,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!ctx.compose && !ctx.meeting && !notes.length && !emailTags.length) recoverDraftNotes();
       if (!ctx.compose && !ctx.meeting) { autoLabel(); detectRequests(); }
       renderHandover();
-    });
+    }
   }
 
   // ----- notes written while composing: kept aside until the sent copy is opened -----
@@ -1266,7 +1329,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   function getTagStore() {
     const st = rsGet(TAGS_KEY);
-    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "" }, st || {});
+    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "", rail: true }, st || {});
   }
   const stageOf = (name, st) => { const k = Object.keys((st || getTagStore()).stages).find((x) => lc(x) === lc(name)); return k ? STAGES.find((g) => g.id === (st || getTagStore()).stages[k]) || null : null; };
   function setStage(name, id) {
@@ -1569,7 +1632,51 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     counts.filter((c) => c.n).forEach((c) => bar.appendChild(h("div", { class: "stage-seg", style: "--c:" + c.g.color + ";flex:" + c.n, title: c.n + " × " + c.g.name },
       h("b", { text: c.n }), h("span", { text: c.n > 1 || counts.filter((x) => x.n).length < 4 ? c.g.name : c.g.short }))));
   }
-  function openTag(name) { openTagName = name; renderTags(); }
+  function openTag(name) { openTagName = name; renderTags(); renderRail(); }
+
+  // ----- the label rail: every label, top to bottom, one click away -----
+  function wireRail() {
+    $("railToggle").onclick = () => { const st = getTagStore(); st.rail = st.rail === false; saveTagStore(st); renderRail(); };
+    $("railOpen").onclick = () => { const st = getTagStore(); st.rail = true; saveTagStore(st); renderRail(); };
+    $("railAll").onclick = () => { openTagName = null; switchTab("tag"); renderRail(); };
+    renderRail();
+  }
+  function railState(s) {
+    if (s.overdue || s.late) return { c: "late", t: s.overdue ? s.overdue + " overdue" : "Due today" };
+    if (s.mine) return { c: "mine", t: s.mine + " mine" };
+    if (s.theirs) return { c: "theirs", t: s.theirs + " theirs" };
+    if (s.open) return { c: "open", t: s.open + " open" };
+    return { c: "quiet", t: s.notes ? "Done" : s.mails.size ? pl(s.mails.size, "email") : "Empty" };
+  }
+  function renderRail() {
+    const rail = $("rail");
+    if (!rail) return;
+    const st = getTagStore();
+    const on = st.rail !== false;
+    document.body.classList.toggle("rail-on", on);
+    document.body.classList.toggle("rail-min", !on);
+    if (!on) return;
+    const stats = tagStats();
+    stats.forEach((s) => { s.stage = stageOf(s.name, st); });
+    applySort(stats, st);
+    const here = new Set(ctx ? [...emailTags, ...notes.flatMap((n) => n.tags)].map(lc) : []);
+    const list = $("railList");
+    list.innerHTML = "";
+    $("railCount").textContent = stats.length || "";
+    if (!stats.length) { list.appendChild(h("li", { class: "rail-empty", text: "No labels yet" })); return; }
+    stats.forEach((s) => {
+      const r = railState(s);
+      const active = tab === "tag" && openTagName && lc(openTagName) === lc(s.name);
+      list.appendChild(h("li", null, h("button", {
+        class: "rail-item " + r.c + (active ? " active" : "") + (here.has(lc(s.name)) ? " here" : ""),
+        title: s.name + " – " + r.t + (here.has(lc(s.name)) ? " (on this email)" : ""),
+        "aria-current": active ? "true" : null,
+        onclick: () => { switchTab("tag"); openTag(s.name); },
+      }, h("bdi", { class: "rail-name", text: s.name }), h("span", { class: "rail-meta", text: r.t }))));
+    });
+    const act = list.querySelector(".active");
+    if (act && act.scrollIntoView) { try { act.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ } }
+  }
   // notes that belong to a label: all notes if the email has the label, otherwise notes with it
   function notesWithTag(e, name) {
     return e.labels.some((t) => lc(t) === lc(name)) ? e.notes : e.notes.filter((n) => n.tags.some((t) => lc(t) === lc(name)));
@@ -2025,7 +2132,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   function adoptCdfStatus() {
     if (!cdfLink) return;
-    const shared = cdfLink.readShared(window.localStorage, cdfLink.LS_STATUS, cdfLink.KIND_STATUS);
+    const shared = cdfLink.readShared(localStore(), cdfLink.LS_STATUS, cdfLink.KIND_STATUS);
     cdfStatus = cdfLink.newer(cdfStatus, shared);
     $("cdfSyncMessage").textContent = cdfStatus
       ? cdfStatus.rows.length + " CDFs · " + new Date(cdfStatus.at).toLocaleString()
@@ -2036,7 +2143,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const result = cdfLink.decode(text, cdfLink.KIND_STATUS);
     if (!result.ok) { $("cdfSyncMessage").textContent = result.error; return; }
     cdfStatus = cdfLink.newer(cdfStatus, result.data);
-    cdfLink.writeShared(window.localStorage, cdfLink.LS_STATUS, cdfLink.encode(cdfLink.KIND_STATUS, cdfStatus));
+    cdfLink.writeShared(localStore(), cdfLink.LS_STATUS, cdfLink.encode(cdfLink.KIND_STATUS, cdfStatus));
     $("cdfStatusPaste").value = "";
     adoptCdfStatus();
     publishCdfNotes();
@@ -2056,7 +2163,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       });
     });
     const text = cdfLink.encode(cdfLink.KIND_NOTES, { at: new Date().toISOString(), notes: output });
-    cdfLink.writeShared(window.localStorage, cdfLink.LS_NOTES, text);
+    cdfLink.writeShared(localStore(), cdfLink.LS_NOTES, text);
     return text;
   }
   function wireCdfLink() {
@@ -2420,6 +2527,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     return out;
   }
   function refreshBadges() {
+    safely("rail", renderRail);
     const a = attention(), total = a.late + a.long;
     $("dueCount").hidden = !total;
     $("dueCount").textContent = total;
@@ -2667,6 +2775,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (which === "all") renderIndex();
     if (which === "tag") renderTags();
     if (which === "sum") renderSummaryInfo();
+    safely("rail", renderRail);
   }
   let toastTimer;
   function toast(msg) {
@@ -2712,14 +2821,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagSearch").addEventListener("input", renderTags);
     const sel = $("tagSort");
     TAG_SORTS.forEach((x) => sel.appendChild(h("option", { value: x.id, text: x.name })));
-    sel.onchange = () => { const st = getTagStore(); st.sort = sel.value; st.sortDir = ""; saveTagStore(st); renderTags(); };
+    sel.onchange = () => { const st = getTagStore(); st.sort = sel.value; st.sortDir = ""; saveTagStore(st); renderTags(); renderRail(); };
     $("tagSortDir").onclick = () => {
       const st = getTagStore();
       st.sortDir = sortChoice(st).dir === "asc" ? "desc" : "asc";
-      saveTagStore(st); renderTags();
+      saveTagStore(st); renderTags(); renderRail();
     };
     $("tagNew").onclick = newTag;
-    $("tagBack").onclick = () => { openTagName = null; renderTags(); };
+    $("tagBack").onclick = () => { openTagName = null; renderTags(); renderRail(); };
+    $("loadRetry").onclick = () => loadItem();
     $("tagRename").onclick = renameTag;
     $("tagDelete").onclick = deleteTag;
     $("tagMail").onclick = emailLabel;

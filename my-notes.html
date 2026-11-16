@@ -206,7 +206,7 @@
     .att bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .note-text { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; font-size: 13.5px; line-height: 1.5; margin-top: 3px; }
     .note-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .note-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; min-height: 26px; white-space: nowrap; min-width: 0; }
+    .note-foot { display: flex; flex-wrap: wrap; row-gap: 0; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; min-height: 26px; white-space: nowrap; min-width: 0; }
     .note-foot .linkbtn { font-size: 11px; }
     .note-foot .muted { flex: none; }
     .note-actions { margin-inline-start: auto; display: flex; gap: 1px; flex: none; }
@@ -280,7 +280,8 @@
     .row-tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
     .sortbar { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
     .sort-k { font-size: 11.5px; color: var(--ink3); }
-    .sortbar select.field { flex: 1; width: auto; padding: 4px 8px; }
+    .sortbar select.field { flex: 1; width: auto; min-width: 0; padding: 4px 8px; }
+    .sortbar .ibtn { flex: none; }
     .sortbar .ibtn { border: 1px solid var(--rule); width: 30px; height: 28px; border-radius: 6px; color: var(--ink2); }
     .row-sub .sort-hint { margin-inline-start: auto; flex: none; font-size: 11px; color: var(--ink2); font-weight: 500; white-space: nowrap; }
     .store { margin-top: 16px; font-size: 11px; color: var(--ink3); }
@@ -473,12 +474,65 @@
       .checks { grid-template-columns: 1fr; }
       .st { font-size: 11px; padding-inline: 1px; }
     }
+    /* label rail: fixed column on the left, full height */
+    :root { --railw: 92px; }
+    .rail { position: fixed; inset-block: 0; inset-inline-start: 0; width: var(--railw); z-index: 5; display: none; flex-direction: column;
+      background: var(--sheet); border-inline-end: 1px solid var(--frame); box-shadow: 1px 0 0 var(--paper), 2px 0 0 var(--rule); }
+    body.rail-on .rail { display: flex; }
+    body.rail-on { padding-inline-start: var(--railw); }
+    .rail-head { display: flex; align-items: center; gap: 2px; padding: 9px 4px 7px 8px; border-bottom: 1px solid var(--rule); }
+    .rail-title { flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0; text-align: start; font-size: 11.5px; font-weight: 600; color: var(--ink2); }
+    .rail-title:hover { color: var(--ink); }
+    .rail-title span { font-weight: 500; color: var(--ink3); }
+    .rail-list { list-style: none; margin: 0; padding: 4px 0 24px; overflow-y: auto; flex: 1; scrollbar-width: thin; }
+    .rail-item { display: block; width: 100%; border: 0; background: none; text-align: start; padding: 5px 6px 5px 9px;
+      border-inline-start: 3px solid var(--sc, transparent); color: var(--ink); line-height: 1.25; }
+    .rail-item:hover { background: var(--rule2); }
+    .rail-item:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+    .rail-name { display: block; font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-meta { display: block; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rail-item.late { --sc: var(--danger); } .rail-item.late .rail-meta { color: var(--over-ink); }
+    .rail-item.mine { --sc: var(--warn); }
+    .rail-item.theirs { --sc: #a066d3; }
+    .rail-item.open { --sc: var(--blue); }
+    .rail-item.quiet .rail-name { color: var(--ink3); font-weight: 400; }
+    .rail-item.here .rail-name::after { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--ink2); margin-inline-start: 4px; vertical-align: 2px; }
+    .rail-item.active { background: var(--blue-soft); }
+    .rail-item.active .rail-name { font-weight: 600; color: var(--blue-ink); }
+    .rail-empty { padding: 8px 9px; font-size: 11px; color: var(--ink3); }
+    .rail-open { display: none; position: fixed; inset-block-start: 8px; inset-inline-start: 0; z-index: 5; align-items: center; gap: 2px;
+      writing-mode: vertical-rl; padding: 8px 2px; border: 1px solid var(--rule); border-inline-start: 0; border-radius: 0 6px 6px 0;
+      background: var(--sheet); color: var(--ink2); font-size: 11px; }
+    .rail-open svg { writing-mode: horizontal-tb; }
+    .rail-open:hover { color: var(--ink); }
+    body.rail-min .rail-open { display: inline-flex; }
+    body.rail-on .tab { padding-inline: 5px; font-size: 12px; }
+    body.rail-min { padding-inline-start: 20px; }
+    @media (max-width: 339px) { body.rail-on .rail, body.rail-min .rail-open { display: none; } body.rail-on, body.rail-min { padding-inline-start: 0; } }
+    /* loading */
+    .loadbox { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: 6px;
+      background: var(--sheet); font-size: 12px; color: var(--ink2); }
+    .loadbox.failed { border-color: var(--danger); background: var(--danger-soft); color: var(--ink); }
+    .loadbox .btn { margin-inline-start: auto; }
+    .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--rule); border-top-color: var(--blue); animation: spin .8s linear infinite; }
+    .loadbox.failed .spin { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+    body.is-loading #view-item .composer, body.is-loading #notes, body.is-loading #elRow { opacity: .6; pointer-events: none; }
     .cdf-sync-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
     .cdf-status-row { margin-block: 8px; }
     .cdf-excel-note { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
+  <aside class="rail" id="rail" aria-label="Labels">
+    <div class="rail-head">
+      <button class="rail-title" id="railAll" title="Show all labels">Labels <span id="railCount"></span></button>
+      <button class="ibtn sm" id="railToggle" title="Hide the label list" aria-label="Hide the label list"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button>
+    </div>
+    <ul class="rail-list" id="railList"></ul>
+  </aside>
+  <button class="rail-open" id="railOpen" title="Show the label list" aria-label="Show the label list"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg><span>Labels</span></button>
   <div class="app">
     <div class="brand">
       <svg viewBox="0 0 18 18" aria-hidden="true">
@@ -521,6 +575,10 @@
   <main>
     <!-- ===== This item ===== -->
     <section class="view" id="view-item">
+      <div class="loadbox" id="loadBox" role="status" hidden>
+        <span class="spin" aria-hidden="true"></span><span id="loadText">Loading notes…</span>
+        <button class="btn sm" id="loadRetry" type="button" hidden>Try again</button>
+      </div>
       <div class="callout neutral" id="cdfStatusCard" hidden>
         <div class="callout-title">CDF status · Excel</div>
         <div id="cdfStatusRows"></div>
@@ -796,6 +854,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.4.0"></script>
+  <script src="my-notes.js?v=3.5.0"></script>
 </body>
 </html>
