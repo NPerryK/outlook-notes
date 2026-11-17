@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.6.0";
+  const VERSION = "3.7.0";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -111,8 +111,26 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   let lblOff = [];         // labels the user removed from this email (auto-label skips them)
   const openHist = new Set();
 
-  const MB = () => Office.context.mailbox;
-  const RS = () => Office.context.roamingSettings;
+  // In the pop-out window there is no mailbox: storage and "open email" go through the pane that opened it.
+  const POPOUT = /[?&]popout=1/.test(location.search);
+  const MB = () => (POPOUT ? popMailbox : Office.context.mailbox);
+  const RS = () => (POPOUT ? popStore : Office.context.roamingSettings);
+  const ROAM_KEYS = ["myNotesIdx2", "mailNotesSummary", "myNotesTags", "myNotesTemplates", "myNotesPending", "myNotesDismissed",
+    "myNotesDue", "myNotesReqHidden", "myNotesDrafts"];
+  let popSnap = {}, popCur = null;
+  const toParent = (o) => { try { Office.context.ui.messageParent(JSON.stringify(o)); } catch (e) { /* window closed */ } };
+  const popStore = {
+    get: (k) => (popSnap[k] === undefined ? undefined : JSON.parse(JSON.stringify(popSnap[k]))),
+    set: (k, v) => { popSnap[k] = JSON.parse(JSON.stringify(v)); toParent({ t: "set", k, v }); },
+    remove: (k) => { delete popSnap[k]; toParent({ t: "remove", k }); },
+    saveAsync: (cb) => { if (cb) cb({ status: "succeeded" }); },
+  };
+  const popMailbox = {
+    item: null,
+    get userProfile() { return popSnap.__me || {}; },
+    displayMessageForm: (id) => toParent({ t: "open", id }),
+    displayNewMessageForm: (o) => toParent({ t: "newmsg", o }),
+  };
   const $ = (id) => document.getElementById(id);
   const ok = (r) => r && r.status === Office.AsyncResultStatus.Succeeded;
   const lc = (s) => String(s).toLowerCase();
@@ -321,6 +339,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     RS().set(k, v);
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try { RS().saveAsync(); } catch (e) { /* ignore */ } }, 0);
+    if (!POPOUT && popDialog) pushPopout();
   }
   function rsRemove(k) { try { RS().remove(k); } catch (e) { /* ignore */ } }
 
@@ -428,7 +447,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const last = notes.slice().sort((a, b) => b.updated - a.updated)[0];
       const e = {
         id, s: (subject || (ctx.meeting ? "(no title)" : "(no subject)")).slice(0, 100),
-        f: ctx.fromName || undefined, r: ctx.received || undefined,
+        f: ctx.compose ? "Me" : ctx.fromName || undefined, r: ctx.compose ? (getIndex()[key] || {}).r || Date.now() : ctx.received || undefined,
         cp: ctx.cp || undefined, ca: ctx.ca || undefined,
         p: last ? last.text.replace(/\s+/g, " ").slice(0, 80) : "", c: notes.length,
         u: Math.max.apply(null, notes.map((n) => n.updated || 0).concat([lblAt || 0])),
@@ -464,6 +483,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     try { return fn(); } catch (e) { try { console.error("My Notes: " + name + " failed", e); } catch (x) { /* no console */ } return undefined; }
   }
   Office.onReady((info) => {
+    if (POPOUT) { safely("popout", startPopout); return; }
     if (info.host !== Office.HostType.Outlook) return;
     safely("ItemChanged", () => MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem));
     safely("wireUi", wireUi);
@@ -474,6 +494,80 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     safely("loadItem", loadItem);
     setTimeout(() => safely("cdfLink", wireCdfLink), 0); // optional; must not delay the notes
   });
+  // ----- pop-out window: the same app, fed by the pane -----
+  let popDialog = null, popTimer = 0;
+  function openPopout() {
+    if (popDialog) { toast("The My Notes window is already open"); return; }
+    const url = location.href.split("#")[0].split("?")[0] + "?popout=1&v=" + VERSION;
+    try {
+      Office.context.ui.displayDialogAsync(url, { height: 85, width: 32, displayInIframe: false, promptBeforeOpen: false }, (r) => {
+        if (!ok(r)) { toast("Couldn't open a window: " + ((r.error && r.error.message) || "not supported here")); return; }
+        popDialog = r.value;
+        popDialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => safely("popMsg", () => onPopMessage(arg.message)));
+        popDialog.addEventHandler(Office.EventType.DialogEventReceived, () => { popDialog = null; document.body.classList.remove("popped"); });
+        document.body.classList.add("popped");
+      });
+    } catch (e) { toast("Couldn't open a window here"); }
+  }
+  function popPayload() {
+    const d = {};
+    ROAM_KEYS.forEach((k) => { const v = rsGet(k); if (v !== undefined) d[k] = v; });
+    d.__me = { emailAddress: (MB().userProfile || {}).emailAddress || "", displayName: (MB().userProfile || {}).displayName || "" };
+    const cur = ctx && !ctx.compose ? { key: currentKey(), id: ctx.item.itemId, s: subject, labels: unionTags(emailTags, notes.flatMap((n) => n.tags)) } : null;
+    return { t: "snap", d, cur };
+  }
+  function pushPopout() {
+    if (!popDialog) return;
+    clearTimeout(popTimer);
+    popTimer = setTimeout(() => {
+      const msg = JSON.stringify(popPayload());
+      try { popDialog.messageChild(msg); } catch (e) { /* older Outlook: localStorage below */ }
+      safely("popLS", () => { const ls = localStore(); if (ls) ls.setItem("myNotesPop", msg); });
+    }, 120);
+  }
+  function onPopMessage(raw) {
+    const m = JSON.parse(raw);
+    if (m.t === "ready") pushPopout();
+    else if (m.t === "set") {
+      RS().set(m.k, m.v); clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { RS().saveAsync(); } catch (e) { /* ignore */ } }, 0);
+      if (m.k === IDX_KEY) idxCache = null;
+      if (m.k === PEND_KEY && props && ctx && !ctx.compose && applyPending()) { persist(null); renderAll(); }
+      refreshBadges();
+      if (tab === "tag") renderTags(); else if (tab === "today") renderToday(); else if (tab === "all") renderIndex();
+    } else if (m.t === "remove") { rsRemove(m.k); refreshBadges(); }
+    else if (m.t === "open") openEmail(m.id);
+    else if (m.t === "newmsg") { try { MB().displayNewMessageForm(m.o); } catch (e) { toast("Couldn't open a new email"); } }
+    else if (m.t === "close") { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; document.body.classList.remove("popped"); }
+  }
+  function startPopout() {
+    document.body.classList.add("popout");
+    document.title = "My Notes";
+    safely("wireUi", wireUi);
+    safely("statusPicker", buildStatusPicker);
+    safely("summaryUi", buildSummaryUi);
+    safely("rail", wireRail);
+    const take = (raw) => safely("snap", () => {
+      const m = JSON.parse(raw);
+      if (!m || m.t !== "snap") return;
+      const first = !Object.keys(popSnap).length;
+      popSnap = m.d || {}; idxCache = null; prefsCache = null;
+      const was = popCur && popCur.key;
+      popCur = m.cur;
+      $("popCur").hidden = !popCur;
+      if (popCur) $("popCurS").textContent = popCur.s || "(no subject)";
+      if (first) switchTab("tag");
+      if (popCur && popCur.key !== was) followOpenedEmail(popCur.labels, true);
+      refreshBadges();
+      if (tab === "tag") renderTags(); else if (tab === "today") renderToday(); else if (tab === "all") renderIndex(); else if (tab === "sum") renderSummaryInfo();
+    });
+    try { Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, (arg) => take(arg.message)); } catch (e) { /* older Outlook */ }
+    window.addEventListener("storage", (ev) => { if (ev.key === "myNotesPop" && ev.newValue) take(ev.newValue); });
+    safely("popLS", () => { const ls = localStore(); const v = ls && ls.getItem("myNotesPop"); if (v) take(v); });
+    $("popCurGo").onclick = () => { if (popCur) followOpenedEmail(popCur.labels, true, true); };
+    toParent({ t: "ready" });
+    switchTab("tag");
+  }
+
   // localStorage throws in some Outlook windows (blocked storage); treat that as "no storage"
   function localStore() { try { return window.localStorage; } catch (e) { return null; } }
 
@@ -606,7 +700,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       refreshBadges();
       if (!ctx.compose && !ctx.meeting && !notes.length && !emailTags.length) recoverDraftNotes();
       if (!ctx.compose && !ctx.meeting) { autoLabel(); detectRequests(); }
+      if (ctx.compose && !ctx.meeting) safely("replyLabels", replyLabels);
       renderHandover();
+      if (!ctx.compose) safely("jump", () => { if (!openedFromAddin()) followOpenedEmail(unionTags(emailTags, notes.flatMap((n) => n.tags))); });
+      pushPopout();
       safely("editAfterLoad", () => {
         const ls = localStore();
         if (!editAfterLoad && ls) { const x = JSON.parse(ls.getItem("myNotesEdit") || "null"); if (x && Date.now() - x.at < 5 * 60000 && notes.some((n) => n.id === x.id)) editAfterLoad = x.id; }
@@ -622,7 +719,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (!ctx || !ctx.compose || ctx.meeting || !draftKey) return;
     const d = getDrafts();
     Object.keys(d).forEach((k) => { if (Date.now() - (d[k].at || 0) > 21 * DAY) delete d[k]; });
-    if (notes.length || emailTags.length) d[draftKey] = { s: subject, at: Date.now(), n: notes.map(toCompact), lb: emailTags.slice() };
+    if (notes.length || emailTags.length) d[draftKey] = { s: subject, at: Date.now(), n: notes.map(toCompact), lb: emailTags.slice(), ik: currentKey() || (d[draftKey] || {}).ik };
     else delete d[draftKey];
     rsSet(DRAFTS_KEY, d);
   }
@@ -640,6 +737,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const e = d[key];
       notes = (e.n || []).map(fromCompact);
       emailTags = (e.lb || []).slice();
+      if (e.ik) { const idx = getIndex(); if (idx[e.ik]) { delete idx[e.ik]; setIndex(idx); } }
       lblAt = Date.now();
       delete d[key];
       rsSet(DRAFTS_KEY, d);
@@ -694,7 +792,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!ok(res)) { toast("Couldn't save: " + ((res.error && res.error.message) || "unknown error")); return; }
       syncCategory();
       const after = () => { updateIndex(); refreshBadges(); renderThread(); if (tab === "today") renderToday(); };
-      if (ctx.compose) { if (stamp) stampDraft(); saveDraftStore(); saveDraft(after); }
+      if (ctx.compose) { if (stamp) stampDraft(); saveDraftStore(); saveDraft(() => { saveDraftStore(); after(); }); }
       else { after(); updateBanner(); }
       if (msg) toast(msg);
     });
@@ -1187,6 +1285,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderRequests();
   }
   function renderRequests() {
+    if (tab === "tag") safely("hereBar", renderHereBar);
     const box = $("reqBox");
     const pending = requests.filter((r) => !isTracked(r));
     box.hidden = !requests.length;
@@ -1242,12 +1341,69 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     allEntries().forEach((e) => { if (e.v.cv === ctx.conv && e.key !== key) e.tags.forEach((t) => { if (!out.some((x) => lc(x) === lc(t))) out.push(t); }); });
     return out;
   }
+  // Was this email just opened from a list inside My Notes? Then show the email itself, not its label.
+  function openedFromAddin() {
+    const ls = localStore();
+    if (!ls || !ctx) return false;
+    try {
+      const x = JSON.parse(ls.getItem("myNotesOpened") || "null");
+      if (!x || Date.now() - x.at > 60000) return false;
+      const e = getIndex()[currentKey()];
+      if (x.id === ctx.item.itemId || (e && e.id === x.id)) { ls.removeItem("myNotesOpened"); return true; }
+    } catch (e) { /* ignore */ }
+    return false;
+  }
+  // Opening an email shows its label: one label → that label; several → the one that needs you most, with a switcher; none → the email.
+  let hereLabels = [];
+  function followOpenedEmail(labels, fromPopout, force) {
+    const st = getTagStore();
+    hereLabels = (labels || []).slice();
+    if (!force && st.jump === false) return;
+    if (editingId || (!fromPopout && $("input") && $("input").value.trim())) return; // don't pull you away from typing
+    if (!hereLabels.length) { if (!POPOUT && tab === "tag") switchTab("item"); else if (POPOUT) renderTags(); return; }
+    const stats = tagStats().filter((x) => hereLabels.some((l) => lc(l) === lc(x.name)));
+    stats.sort((a, b) => b.late - a.late || b.mine - a.mine || b.open - a.open || Math.max(b.u, b.r) - Math.max(a.u, a.r));
+    const pick = stats.length ? stats[0].name : hereLabels[0];
+    switchTab("tag");
+    openTag(pick);
+  }
+  function renderHereBar() {
+    const bar = $("hereBar");
+    if (!bar) return;
+    const cur = POPOUT ? (popCur && popCur.labels) || [] : ctx && !ctx.compose ? unionTags(emailTags, notes.flatMap((n) => n.tags)) : [];
+    const show = cur.some((l) => openTagName && lc(l) === lc(openTagName));
+    bar.hidden = !show;
+    if (!show) return;
+    bar.innerHTML = "";
+    bar.appendChild(h("span", { class: "here-k", text: cur.length > 1 ? "This email is in:" : "This email is in this label" }));
+    if (cur.length > 1) cur.forEach((l) => bar.appendChild(h("button", { class: "here-chip" + (lc(l) === lc(openTagName) ? " on" : ""), "aria-pressed": lc(l) === lc(openTagName) ? "true" : "false",
+      onclick: () => openTag(l) }, tagChip(l))));
+    if (!POPOUT) {
+      const reqs = (requests || []).filter((r) => !isTracked(r)).length;
+      bar.appendChild(h("button", { class: "linkbtn here-notes", onclick: () => switchTab("item"),
+        text: reqs ? (reqs === 1 ? "1 request on this email" : reqs + " requests on this email") : notes.length ? "Notes on this email (" + notes.length + ")" : "This email" }));
+    }
+  }
   // the newest email we know of in an email's conversation (the email itself when it is the newest)
   function latestInThread(e) {
     if (!e || !e.v.cv) return e;
     let best = e;
     allEntries().forEach((x) => { if (x.v.cv === e.v.cv && !x.v.draft && (x.v.r || 0) > (best.v.r || 0)) best = x; });
     return best;
+  }
+  // Writing a reply in a labelled conversation: the reply gets the same labels, so the label follows your answer too.
+  function replyLabels() {
+    const st = getTagStore();
+    if (!st.autoLabel || !props || !ctx.conv) return;
+    const add = threadLabels().filter((t) => !emailTags.some((x) => lc(x) === lc(t)) && !lblOff.some((x) => lc(x) === lc(t)));
+    if (!add.length) return;
+    changeEmailTags(() => { add.forEach((t) => emailTags.push(t)); }, "Your reply is in " + add.join(", "));
+  }
+  function openEntry(e) {
+    if (!e.v.draft) return openEmail(e.id);
+    const others = allEntries().filter((x) => x.v.cv && x.v.cv === e.v.cv && !x.v.draft).sort((a, b) => (b.v.r || 0) - (a.v.r || 0));
+    if (others.length) { openEmail(others[0].id); toast("Your reply is in Sent Items; opened the latest email of the thread"); }
+    else openEmail(e.id);
   }
   function openLatest(e) {
     const l = latestInThread(e);
@@ -1315,6 +1471,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderReply();
   }
   function openEmail(id) {
+    safely("openedFlag", () => { const ls = localStore(); if (ls) ls.setItem("myNotesOpened", JSON.stringify({ id, at: Date.now() })); });
     try { MB().displayMessageForm(id); }
     catch (e) { toast("Couldn't open it. The email may have been moved or deleted."); }
   }
@@ -1360,7 +1517,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   function getTagStore() {
     const st = rsGet(TAGS_KEY);
-    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "", rail: true }, st || {});
+    return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "", rail: true, jump: true }, st || {});
   }
   const stageOf = (name, st) => { const k = Object.keys((st || getTagStore()).stages).find((x) => lc(x) === lc(name)); return k ? STAGES.find((g) => g.id === (st || getTagStore()).stages[k]) || null : null; };
   function setStage(name, id) {
@@ -1744,6 +1901,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     return rows;
   }
   function renderTagDetail() {
+    safely("hereBar", renderHereBar);
     const name = openTagName;
     const t = $("tagTitle");
     t.innerHTML = "";
@@ -1805,7 +1963,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // A compact block: email subject (opens it) + its notes
   function mailBlock(e, list, inTimeline) {
     const block = h("div", { class: "mblock" + (inTimeline ? " in-tl" : "") },
-      h("button", { class: "mblock-subj", title: "Open", onclick: () => openEmail(e.id) },
+      h("button", { class: "mblock-subj", title: e.v.draft ? "Your reply – opens the latest email in this thread" : "Open", onclick: () => openEntry(e) },
         ic(e.v.mt ? "cal" : e.v.draft ? "compose" : "mail", 14), h("bdi", { text: e.v.s })));
     if (!list.length) block.appendChild(h("div", { class: "mnote-empty muted small", text: "Labeled, no notes" }));
     list.slice().sort((a, b) => isDone(a) - isDone(b) || b.updated - a.updated).forEach((n) => {
@@ -2916,8 +3074,16 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 
   function wireUi() {
     $("input").addEventListener("input", updateComposerState);
+    // collapse the empty composer a moment after it loses focus, so a double-click on a note isn't knocked off target
+    let closeT = 0;
+    $("composer").addEventListener("focusout", () => { const c = $("composer"); c.classList.add("closing"); clearTimeout(closeT); closeT = setTimeout(() => c.classList.remove("closing"), 450); });
+    $("composer").addEventListener("focusin", () => { clearTimeout(closeT); $("composer").classList.remove("closing"); });
     $("input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveNote(); }
+      // Enter saves; Shift+Enter starts a new line (Ctrl+Enter still saves)
+      if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        if ($("input").value.trim()) saveNote();
+      }
       if (e.key === "Escape" && editingId) resetComposer();
     });
     $("save").onclick = saveNote;
@@ -2958,6 +3124,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagNew").onclick = newTag;
     $("tagBack").onclick = () => { openTagName = null; renderTags(); renderRail(); };
     $("loadRetry").onclick = () => loadItem();
+    $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : openPopout());
+    const jmp = $("tagJump");
+    jmp.checked = getTagStore().jump !== false;
+    jmp.onchange = () => { const st = getTagStore(); st.jump = jmp.checked; saveTagStore(st); };
     $("tagRename").onclick = renameTag;
     $("tagDelete").onclick = deleteTag;
     $("tagMail").onclick = emailLabel;

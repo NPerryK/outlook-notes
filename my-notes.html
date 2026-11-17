@@ -136,14 +136,14 @@
 
     /* ---------- composer ---------- */
     .composer { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; }
-    .composer:focus-within, .composer.open { border-color: var(--frame); }
+    .composer:focus-within, .composer.open, .composer.closing { border-color: var(--frame); }
     .composer.editing { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
     .editing-tag { display: none; font-size: 11px; font-weight: 600; color: var(--blue); padding: 6px 10px 0; }
     .composer.editing .editing-tag { display: block; }
     .composer textarea { display: block; width: 100%; min-height: 34px; resize: none; border: 0; outline: none;
       background: transparent; padding: 8px 10px 6px; font-size: 13.5px; line-height: 1.5; unicode-bidi: plaintext; }
-    .composer:focus-within textarea, .composer.open textarea { min-height: 66px; resize: vertical; }
-    .composer:not(:focus-within):not(.open) .cx { display: none; }
+    .composer:focus-within textarea, .composer.open textarea, .composer.closing textarea { min-height: 66px; resize: vertical; }
+    .composer:not(:focus-within):not(.open):not(.closing) .cx { display: none; }
     .crow { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--rule2); min-height: 36px; }
     .crow > .ic { color: var(--ink3); margin-top: 3px; }
     .crow-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
@@ -537,6 +537,22 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
     body.is-loading #view-item .composer, body.is-loading #notes, body.is-loading #elRow { opacity: .6; pointer-events: none; }
+    /* pop-out window */
+    body.popout .tb, body.popout #tab-item, body.popout #kbdHelp { display: none; }
+    body.popout #popBtn svg { transform: rotate(180deg); }
+    .pop-cur { display: none; align-items: center; gap: 6px; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--frame); border-radius: 6px; background: var(--sheet); font-size: 12px; }
+    body.popout .pop-cur:not([hidden]) { display: flex; }
+    .pop-cur-k { color: var(--ink3); flex: none; }
+    .pop-cur bdi { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .popped-note { display: none; margin: 0 0 8px; font-size: 11.5px; color: var(--ink3); }
+    body.popped .popped-note { display: block; }
+    /* this email's labels, on the label page */
+    .here-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--blue-soft); font-size: 12px; }
+    .here-k { color: var(--blue-ink); font-weight: 500; }
+    .here-chip { border: 1px solid transparent; background: none; padding: 1px; border-radius: 99px; opacity: .65; }
+    .here-chip.on { opacity: 1; border-color: var(--blue); }
+    .here-chip:hover { opacity: 1; }
+    .here-notes { margin-inline-start: auto; font-size: 12px; }
     .cdf-sync-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
     .cdf-status-row { margin-block: 8px; }
     .cdf-excel-note { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -560,9 +576,15 @@
       </svg>
       <span class="brand-name">My Notes</span>
       <span class="ver" id="ver"></span>
+      <button class="ibtn sm" id="popBtn" title="Open My Notes in its own window (move it to another screen)" aria-label="Open in a separate window"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5h4.5V7M13.5 2.5L8 8"/><path d="M11.5 9.5v3.5a.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5V5a.5.5 0 01.5-.5h3.5"/></svg></button>
       <button class="ibtn sm" id="kbdHelp" title="Keyboard shortcuts (Alt+/)" aria-label="Keyboard shortcuts"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="8.5" rx="1.5"/><path d="M4.5 7h1M7.5 7h1M10.5 7h1M4.5 9.5h7"/></svg></button>
     </div>
 
+    <div class="pop-cur" id="popCur" hidden>
+      <span class="pop-cur-k">Open in Outlook:</span><bdi id="popCurS"></bdi>
+      <button class="linkbtn" id="popCurGo" type="button">Its label</button>
+    </div>
+    <div class="popped-note">My Notes is open in its own window.</div>
     <div class="tb" role="group" aria-label="Current item">
       <div class="tb-subj"><span class="ic" id="tbIcon"></span><div id="subject">Loading…</div></div>
       <div class="tb-row">
@@ -677,7 +699,7 @@
           </div>
           <div class="cfoot-btns">
             <button class="btn" id="cancel" hidden>Cancel</button>
-            <button class="btn primary" id="save" disabled title="Ctrl+Enter">Add note</button>
+            <button class="btn primary" id="save" disabled title="Enter to save · Shift+Enter for a new line">Add note</button>
           </div>
         </div>
       </div>
@@ -747,7 +769,8 @@
         <div class="stage-bar" id="stageBar" hidden></div>
         <ul class="list" id="tagList"></ul>
         <label class="check" style="margin-top:14px"><input type="checkbox" id="tagByStage"> Group labels by stage</label>
-        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagAuto"> Add emails to a label automatically when the subject has its document number</label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagJump"> When I open an email, show its label</label>
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagAuto"> Add emails to a label automatically: subject with its document number, replies in the same thread, and my own replies</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagCats"> Show labels as Outlook categories</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagHasNotes"> Mark every email that has notes with “📓 Notes”</label>
         <div class="hint" style="margin-inline-start:21px">Lets you filter and search your mailbox by label.</div>
@@ -757,6 +780,7 @@
           <button class="linkbtn" id="tagBack"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>All labels</button>
           <span><button class="linkbtn" id="tagRename">Rename</button><button class="linkbtn danger" id="tagDelete">Delete</button></span>
         </div>
+        <div class="here-bar" id="hereBar" hidden></div>
         <div class="tag-title" id="tagTitle"></div>
         <div class="hint" id="tagStats"></div>
         <div class="dos-strip" id="dosStrip" hidden></div>
@@ -874,6 +898,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.6.0"></script>
+  <script src="my-notes.js?v=3.7.0"></script>
 </body>
 </html>
