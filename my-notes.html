@@ -780,6 +780,8 @@
         <label class="check" style="margin-top:14px"><input type="checkbox" id="tagByStage"> Group labels by stage</label>
         <label class="flabel" for="filesRoot" style="margin-top:14px;display:block">CDF files folder</label>
         <input class="field" id="filesRoot" dir="ltr" spellcheck="false">
+        <label class="flabel" for="filesExt" style="margin-top:8px;display:block">File type of the CDF files</label>
+        <input class="field" id="filesExt" dir="ltr" spellcheck="false" style="max-width:90px">
         <label class="flabel" for="gccBase" style="margin-top:8px;display:block">GCC address (the link without the number)</label>
         <input class="field" id="gccBase" dir="ltr" spellcheck="false">
         <label class="check" style="margin-top:10px"><input type="checkbox" id="tagJump"> When I open an email, show its label</label>
@@ -803,7 +805,7 @@
           <button class="btn sm" id="tagLabelHere">Label this email</button>
           <button class="btn sm" id="tagAddHere">New note</button>
           <button class="btn sm" id="tagGcc" hidden>GCC</button>
-          <button class="btn sm" id="tagFolder" hidden title="Copy the CDF files folder path">Folder</button>
+          <button class="btn sm" id="tagFolder" hidden title="Copy the path of the CDF file or folder">Files</button>
           <button class="linkbtn" id="tagGccSet" hidden title="Change the GCC link">Change GCC link</button>
           <button class="btn sm" id="tagMail">Email summary</button>
           <button class="btn sm" id="tagInsert">Insert open items</button>
@@ -914,6 +916,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.8.0"></script>
+  <script src="my-notes.js?v=3.8.1"></script>
 </body>
 </html>

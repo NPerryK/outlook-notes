@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.8.0";
+  const VERSION = "3.8.1";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -1930,6 +1930,35 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const root = getTagStore().filesRoot || FILES_DEF;
     copyPlain(root).then((y) => toast(y ? "Folder path copied – in File Explorer press Ctrl+L, Ctrl+V, Enter" : "Couldn't copy"));
   }
+  // File names in the CDF folder: "A330-1-951.A" (GCC file of revision A), "A330-1-994.-ATT" (explanation)
+  const revRank = (r) => (!r || r === "-" ? 0 : r.length * 100 + (r.charCodeAt(r.length - 1) - 64));
+  function cdfFileBase(name) {
+    const ref = cdfLink && cdfLink.refs ? cdfLink.refs(name)[0] : null;
+    if (!ref) return null;
+    let rev = ref.rev;
+    if (!rev && cdfStatus && cdfStatus.rows) {
+      cdfStatus.rows.forEach((r) => { const k = cdfLink.keyParts(r[0]); if (k && k.n === ref.n && (rev === "" || revRank(k.rev) > revRank(rev))) rev = k.rev || "-"; });
+    }
+    return { base: cdfLink.label(ref.n, rev || ""), known: !!rev, num: cdfLink.label(ref.n, "") };
+  }
+  function filesMenu(anchor, name) {
+    const st = getTagStore(), root = (st.filesRoot || FILES_DEF).replace(/[\\/]+$/, ""), ext = st.filesExt === undefined ? ".pdf" : st.filesExt;
+    const f = cdfFileBase(name);
+    const copy = (path, what) => copyPlain(path).then((y) => toast(y ? what + " copied – in File Explorer press Ctrl+L, Ctrl+V, Enter" : "Couldn't copy"));
+    const items = [];
+    if (f && f.known) {
+      items.push({ label: "Copy file path – GCC file", hint: f.base, onClick: () => copy(root + "\\" + f.base + ext, "File path") });
+      items.push({ label: "Copy file path – explanation", hint: f.base + "-ATT", onClick: () => copy(root + "\\" + f.base + "-ATT" + ext, "File path") });
+    }
+    if (f) items.push({ label: "Find in the folder", hint: f.num, onClick: () => {
+      const a = h("a", { href: "search-ms:query=" + encodeURIComponent(f.num) + "&crumb=location:" + encodeURIComponent(root), style: "display:none" });
+      document.body.appendChild(a); try { a.click(); } catch (e) { /* blocked */ } a.remove();
+      copyPlain(f.num);
+      toast("Opening a search for " + f.num + " – if nothing opens, the number is copied: search the folder with it");
+    } });
+    items.push({ label: "Copy folder path", onClick: copyFolder });
+    popover(anchor, items);
+  }
   // GCC emails carry "CDFDetail?CDFId=…" links: learn the id for this email's CDF labels in the background
   function learnGccIds() {
     if (!ctx || ctx.compose || !ctx.item.body) return;
@@ -2001,7 +2030,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
           const items = [{ label: "Open label", onClick: () => { switchTab("tag"); openTag(s.name); } }];
           if (isCdfLabel(s.name)) {
             items.push({ label: gccId(s.name) ? "Open in GCC" : "Add GCC link…", onClick: () => openGcc(s.name) });
-            items.push({ label: "Copy folder path", hint: "CDF files", onClick: copyFolder });
+            items.push({ label: "CDF files…", onClick: () => filesMenu(at(ev), s.name) });
           }
           popover(at(ev), items);
         },
@@ -3260,10 +3289,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("loadRetry").onclick = () => loadItem();
     $("tagGcc").onclick = () => openGcc(openTagName);
     $("tagGccSet").onclick = () => { const st = getTagStore(); if (st.gcc) delete st.gcc[lc(openTagName)]; saveTagStore(st); openGcc(openTagName); };
-    $("tagFolder").onclick = copyFolder;
+    $("tagFolder").onclick = () => filesMenu($("tagFolder"), openTagName);
     const fr = $("filesRoot"), gb = $("gccBase");
     fr.value = getTagStore().filesRoot || FILES_DEF; gb.value = getTagStore().gccBase || GCC_DEF;
     fr.onchange = () => { const st = getTagStore(); st.filesRoot = fr.value.trim() || FILES_DEF; saveTagStore(st); toast("Folder saved"); };
+    const fx = $("filesExt");
+    fx.value = getTagStore().filesExt === undefined ? ".pdf" : getTagStore().filesExt;
+    fx.onchange = () => { const st = getTagStore(); let v = fx.value.trim(); if (v && v[0] !== ".") v = "." + v; st.filesExt = v; fx.value = v; saveTagStore(st); toast("File type saved"); };
     gb.onchange = () => { const st = getTagStore(); st.gccBase = gb.value.trim() || GCC_DEF; saveTagStore(st); toast("GCC address saved"); };
     $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : openPopout());
     const jmp = $("tagJump");
