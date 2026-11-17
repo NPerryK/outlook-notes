@@ -553,6 +553,11 @@
     .here-chip.on { opacity: 1; border-color: var(--blue); }
     .here-chip:hover { opacity: 1; }
     .here-notes { margin-inline-start: auto; font-size: 12px; }
+    .dropzone { display: none; align-items: center; justify-content: center; gap: 6px; margin: 0 0 10px; padding: 9px; border: 1.5px dashed var(--rule); border-radius: 6px;
+      font-size: 12px; color: var(--ink3); transition: background .12s, border-color .12s; }
+    body.is-compose .dropzone { display: flex; }
+    .dropzone.over { display: flex; border-color: var(--blue); background: var(--blue-soft); color: var(--blue-ink); }
+    #tagGcc.dim { color: var(--ink3); }
     .cdf-sync-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
     .cdf-status-row { margin-block: 8px; }
     .cdf-excel-note { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -659,6 +664,10 @@
         <div class="hint">To add one, write a note below and click “Save as quick note”. The due date is kept as a number of workdays.</div>
       </div>
 
+      <div class="dropzone" id="dropZone" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v7M5 6.5l3 3 3-3"/><path d="M2.5 10.5v2a1 1 0 001 1h9a1 1 0 001-1v-2"/></svg>
+        <span>Drag emails here to attach them</span>
+      </div>
       <div class="composer" id="composer">
         <div class="editing-tag">Editing note</div>
         <textarea id="input" dir="auto" aria-label="Note" placeholder="Write a note…" rows="1"></textarea>
@@ -769,7 +778,11 @@
         <div class="stage-bar" id="stageBar" hidden></div>
         <ul class="list" id="tagList"></ul>
         <label class="check" style="margin-top:14px"><input type="checkbox" id="tagByStage"> Group labels by stage</label>
-        <label class="check" style="margin-top:6px"><input type="checkbox" id="tagJump"> When I open an email, show its label</label>
+        <label class="flabel" for="filesRoot" style="margin-top:14px;display:block">CDF files folder</label>
+        <input class="field" id="filesRoot" dir="ltr" spellcheck="false">
+        <label class="flabel" for="gccBase" style="margin-top:8px;display:block">GCC address (the link without the number)</label>
+        <input class="field" id="gccBase" dir="ltr" spellcheck="false">
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="tagJump"> When I open an email, show its label</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagAuto"> Add emails to a label automatically: subject with its document number, replies in the same thread, and my own replies</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagCats"> Show labels as Outlook categories</label>
         <label class="check" style="margin-top:6px"><input type="checkbox" id="tagHasNotes"> Mark every email that has notes with “📓 Notes”</label>
@@ -789,6 +802,9 @@
         <div class="tag-actions">
           <button class="btn sm" id="tagLabelHere">Label this email</button>
           <button class="btn sm" id="tagAddHere">New note</button>
+          <button class="btn sm" id="tagGcc" hidden>GCC</button>
+          <button class="btn sm" id="tagFolder" hidden title="Copy the CDF files folder path">Folder</button>
+          <button class="linkbtn" id="tagGccSet" hidden title="Change the GCC link">Change GCC link</button>
           <button class="btn sm" id="tagMail">Email summary</button>
           <button class="btn sm" id="tagInsert">Insert open items</button>
         </div>
@@ -898,6 +914,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.7.0"></script>
+  <script src="my-notes.js?v=3.8.0"></script>
 </body>
 </html>

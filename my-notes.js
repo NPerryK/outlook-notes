@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.7.0";
+  const VERSION = "3.8.0";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -486,6 +486,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (POPOUT) { safely("popout", startPopout); return; }
     if (info.host !== Office.HostType.Outlook) return;
     safely("ItemChanged", () => MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem));
+    safely("drop", wireDrop);
     safely("wireUi", wireUi);
     safely("statusPicker", buildStatusPicker);
     safely("summaryUi", buildSummaryUi);
@@ -581,6 +582,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     setLoading(false);
     if (!item) {
       ctx = null; notes = []; emailTags = []; props = null; subject = "";
+      document.body.classList.remove("is-compose");
       safely("reset", resetComposer); safely("render", renderAll);
       // Opening an email from the pane can briefly leave no item selected; look again before giving up.
       const recheck = () => {
@@ -600,6 +602,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       attachments: Array.isArray(item.attachments)
         ? item.attachments.filter((a) => !a.isInline && a.name).map((a) => a.name) : [],
     };
+    document.body.classList.toggle("is-compose", ctx.compose && !meeting);
     subject = ctx.compose ? "" : item.subject || "";
     if (cdfLink && item.body) {
       try {
@@ -702,6 +705,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!ctx.compose && !ctx.meeting) { autoLabel(); detectRequests(); }
       if (ctx.compose && !ctx.meeting) safely("replyLabels", replyLabels);
       renderHandover();
+      if (!ctx.compose && !ctx.meeting) safely("gcc", learnGccIds);
       if (!ctx.compose) safely("jump", () => { if (!openedFromAddin()) followOpenedEmail(unionTags(emailTags, notes.flatMap((n) => n.tags))); });
       pushPopout();
       safely("editAfterLoad", () => {
@@ -1848,6 +1852,116 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderRail();
   }
   const RAIL_MIN = 72, RAIL_MAX = 320, RAIL_DEF = 92;
+
+  // ----- drag emails from the message list into the pane: they're attached to the email you're writing -----
+  let dropTimer = 0;
+  function dropHover(on) {
+    const z = $("dropZone");
+    if (!z) return;
+    z.classList.toggle("over", on);
+    clearTimeout(dropTimer);
+    if (on) dropTimer = setTimeout(() => z.classList.remove("over"), 700);
+  }
+  function wireDrop() {
+    if (Office.EventType.DragAndDropEvent) {
+      MB().addHandlerAsync(Office.EventType.DragAndDropEvent, (ev) => safely("dragdrop", () => {
+        const d = ev.dragAndDropEventData || {};
+        if (d.type === "dragover") dropHover(true);
+        else if (d.type === "drop") { dropHover(false); attachDropped(((d.dataTransfer || {}).files || []).map((f) => ({ name: f.name, type: f.type, blob: f.fileContent }))); }
+      }), () => {});
+    }
+    // classic Outlook on Windows / Mac: ordinary HTML drag and drop
+    document.addEventListener("dragover", (e) => { if (ctx && ctx.compose && e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files")) { e.preventDefault(); dropHover(true); } });
+    document.addEventListener("drop", (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault(); dropHover(false);
+      attachDropped([...e.dataTransfer.files].map((f) => ({ name: f.name, type: f.type, blob: f })));
+    });
+  }
+  const toBase64 = (blob) => new Promise((resolve, reject) => {
+    if (typeof blob === "string") return resolve(blob); // already base64
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).replace(/^data:[^,]*,/, ""));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+  async function attachDropped(files) {
+    if (!files.length) return;
+    if (!ctx || !ctx.compose) { toast("Open a reply or a new email first, then drop the email here to attach it"); return; }
+    const item = ctx.item;
+    if (!item.addFileAttachmentFromBase64Async) { toast("This Outlook can't attach dropped emails"); return; }
+    let okN = 0, bad = 0;
+    for (const f of files) {
+      let name = String(f.name || "email").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "email";
+      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += ".eml";
+      try {
+        const b64 = await toBase64(f.blob);
+        const done = await new Promise((res) => item.addFileAttachmentFromBase64Async(b64, name, { isInline: false }, (r) => res(ok(r))));
+        if (done) okN++; else bad++;
+      } catch (e) { bad++; }
+    }
+    toast(okN ? "Attached " + pl(okN, "item") + (bad ? " – " + bad + " failed" : "") : "Couldn't attach it");
+  }
+
+  // ----- the CDF itself: GCC page and the files folder -----
+  const GCC_DEF = "https://iail.outsystemsenterprise.com/GCC_ConversionMaintenance/CDFDetail?CDFId=";
+  const FILES_DEF = "G:\\A330-300_P2F_Conversion\\05 Engineering\\Deviations\\AIRCRAFT 1 (01574)\\CDF AC1";
+  const cdfNum = (text) => { const r = cdfLink && cdfLink.refs ? cdfLink.refs(text) : []; return r.length ? r[0].n : 0; };
+  function isCdfLabel(name) { return !!cdfNum(name) || refsOf(name, parsePrefixes((prefsCache || getPrefs()).prefixes)).length > 0; }
+  function gccId(name) { const g = getTagStore().gcc || {}; return g[lc(name)] || ""; }
+  function saveGcc(name, id) { const st = getTagStore(); st.gcc = Object.assign({}, st.gcc || {}, { [lc(name)]: String(id) }); saveTagStore(st); }
+  function openUrl(url) {
+    try { if (Office.context.ui && Office.context.ui.openBrowserWindow) { Office.context.ui.openBrowserWindow(url); return; } } catch (e) { /* fall back */ }
+    try { window.open(url, "_blank", "noopener"); } catch (e) { toast("Couldn't open the link"); }
+  }
+  function openGcc(name) {
+    const id = gccId(name);
+    if (id) return openUrl((getTagStore().gccBase || GCC_DEF) + id);
+    dialog({ title: "GCC link for " + name, input: true, maxLength: 600, ok: "Save and open",
+      text: "Paste the CDF Details link from GCC once (or just the number after CDFId=). My Notes remembers it for this label." }).then((v) => {
+      const m = v && (String(v).match(/CDFId=(\d+)/i) || String(v).trim().match(/^(\d+)$/));
+      if (!m) { if (v !== null) toast("That isn't a GCC CDF link"); return; }
+      saveGcc(name, m[1]);
+      if (tab === "tag") renderTags();
+      openUrl((getTagStore().gccBase || GCC_DEF) + m[1]);
+    });
+  }
+  function copyFolder() {
+    const root = getTagStore().filesRoot || FILES_DEF;
+    copyPlain(root).then((y) => toast(y ? "Folder path copied – in File Explorer press Ctrl+L, Ctrl+V, Enter" : "Couldn't copy"));
+  }
+  // GCC emails carry "CDFDetail?CDFId=…" links: learn the id for this email's CDF labels in the background
+  function learnGccIds() {
+    if (!ctx || ctx.compose || !ctx.item.body) return;
+    const item = ctx.item;
+    const want = unionTags(emailTags, notes.flatMap((n) => n.tags)).filter((l) => isCdfLabel(l) && !gccId(l));
+    if (!want.length) return;
+    setTimeout(() => {
+      if (!ctx || ctx.item !== item) return;
+      try {
+        item.body.getAsync(Office.CoercionType.Html, (r) => {
+          if (!ok(r) || !ctx || ctx.item !== item) return;
+          const html = String(r.value || "");
+          const re = /CDFDetail\?CDFId=(\d+)/gi;
+          const found = [];
+          let m;
+          while ((m = re.exec(html)) && found.length < 20) {
+            const near = html.slice(Math.max(0, m.index - 400), m.index + 400).replace(/<[^>]+>/g, " ");
+            found.push({ id: m[1], near });
+          }
+          if (!found.length) return;
+          const ids = [...new Set(found.map((f) => f.id))];
+          const learned = [];
+          want.forEach((l) => {
+            const n = cdfNum(l);
+            const hit = found.find((f) => n && cdfNum(f.near) === n) || (ids.length === 1 && want.length === 1 ? found[0] : null);
+            if (hit) { saveGcc(l, hit.id); learned.push(l); }
+          });
+          if (learned.length) { toast("GCC link saved for " + learned.join(", ")); if (tab === "tag") renderTags(); }
+        });
+      } catch (e) { /* body not available */ }
+    }, 1500);
+  }
   function railState(s) {
     if (s.overdue || s.late) return { c: "late", t: s.overdue ? s.overdue + " overdue" : "Due today" };
     if (s.mine) return { c: "mine", t: s.mine + " mine" };
@@ -1882,6 +1996,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         title: s.name + " – " + r.t + (here.has(lc(s.name)) ? " (on this email)" : ""),
         "aria-current": active ? "true" : null,
         onclick: () => { switchTab("tag"); openTag(s.name); },
+        oncontextmenu: (ev) => {
+          ev.preventDefault();
+          const items = [{ label: "Open label", onClick: () => { switchTab("tag"); openTag(s.name); } }];
+          if (isCdfLabel(s.name)) {
+            items.push({ label: gccId(s.name) ? "Open in GCC" : "Add GCC link…", onClick: () => openGcc(s.name) });
+            items.push({ label: "Copy folder path", hint: "CDF files", onClick: copyFolder });
+          }
+          popover(at(ev), items);
+        },
       }, h("bdi", { class: "rail-name", text: s.name }), h("span", { class: "rail-meta", text: r.t }))));
     });
     const act = list.querySelector(".active");
@@ -1903,6 +2026,16 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   function renderTagDetail() {
     safely("hereBar", renderHereBar);
     const name = openTagName;
+    safely("cdfBtns", () => {
+      const cdf = isCdfLabel(name);
+      $("tagGcc").hidden = !cdf; $("tagFolder").hidden = !cdf;
+      if (cdf) {
+        const id = gccId(name);
+        $("tagGcc").title = id ? "Open " + name + " in GCC" : "Add the GCC link for " + name + " (once)";
+        $("tagGcc").classList.toggle("dim", !id);
+        $("tagGccSet").hidden = !id;
+      } else $("tagGccSet").hidden = true;
+    });
     const t = $("tagTitle");
     t.innerHTML = "";
     t.appendChild(tagChip(name));
@@ -3001,6 +3134,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       okb.className = "btn " + (o.danger ? "danger" : "primary");
       cancel.hidden = !!o.alert;
       inp.hidden = !o.input;
+      inp.maxLength = o.maxLength || 40;
       inp.value = o.value || "";
       m.hidden = false;
       const close = (yes) => {
@@ -3124,6 +3258,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("tagNew").onclick = newTag;
     $("tagBack").onclick = () => { openTagName = null; renderTags(); renderRail(); };
     $("loadRetry").onclick = () => loadItem();
+    $("tagGcc").onclick = () => openGcc(openTagName);
+    $("tagGccSet").onclick = () => { const st = getTagStore(); if (st.gcc) delete st.gcc[lc(openTagName)]; saveTagStore(st); openGcc(openTagName); };
+    $("tagFolder").onclick = copyFolder;
+    const fr = $("filesRoot"), gb = $("gccBase");
+    fr.value = getTagStore().filesRoot || FILES_DEF; gb.value = getTagStore().gccBase || GCC_DEF;
+    fr.onchange = () => { const st = getTagStore(); st.filesRoot = fr.value.trim() || FILES_DEF; saveTagStore(st); toast("Folder saved"); };
+    gb.onchange = () => { const st = getTagStore(); st.gccBase = gb.value.trim() || GCC_DEF; saveTagStore(st); toast("GCC address saved"); };
     $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : openPopout());
     const jmp = $("tagJump");
     jmp.checked = getTagStore().jump !== false;
