@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.8.1";
+  const VERSION = "3.8.2";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -118,7 +118,30 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   const ROAM_KEYS = ["myNotesIdx2", "mailNotesSummary", "myNotesTags", "myNotesTemplates", "myNotesPending", "myNotesDismissed",
     "myNotesDue", "myNotesReqHidden", "myNotesDrafts"];
   let popSnap = {}, popCur = null;
-  const toParent = (o) => { try { Office.context.ui.messageParent(JSON.stringify(o)); } catch (e) { /* window closed */ } };
+  // Pop-out → Outlook pane: Office messaging, and localStorage as a second road (any open My Notes pane picks it up)
+  const popSent = {};
+  const toParent = (o) => {
+    o.mid = o.mid || Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const raw = JSON.stringify(o);
+    let sent = false;
+    try { Office.context.ui.messageParent(raw); sent = true; } catch (e) { /* not available */ }
+    const viaLS = () => { delete popSent[o.mid]; try { window.localStorage.setItem("myNotesPopCmd", JSON.stringify(Object.assign({ at: Date.now() }, o))); } catch (e) { /* blocked */ } };
+    // no answer from the pane that opened this window (it may have reloaded): any open My Notes pane takes it from localStorage
+    if (o.t !== "ready") { if (sent) popSent[o.mid] = setTimeout(viaLS, 1200); else viaLS(); }
+    return o.mid;
+  };
+  const popWaits = {};
+  function popOpen(id) {
+    const mid = toParent({ t: "open", id });
+    toast("Opening in Outlook…");
+    popWaits[mid] = setTimeout(() => { delete popWaits[mid]; toast("Outlook didn't open it. Keep the My Notes pane open in Outlook (pin it), then try again"); }, 4000);
+  }
+  function popAck(m) {
+    if (popSent[m.mid]) { clearTimeout(popSent[m.mid]); delete popSent[m.mid]; }
+    if (!popWaits[m.mid]) return;
+    clearTimeout(popWaits[m.mid]); delete popWaits[m.mid];
+    toast(m.ok ? "Opened in Outlook" : "Outlook couldn't open it" + (m.err ? ": " + m.err : ""));
+  }
   const popStore = {
     get: (k) => (popSnap[k] === undefined ? undefined : JSON.parse(JSON.stringify(popSnap[k]))),
     set: (k, v) => { popSnap[k] = JSON.parse(JSON.stringify(v)); toParent({ t: "set", k, v }); },
@@ -128,7 +151,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   const popMailbox = {
     item: null,
     get userProfile() { return popSnap.__me || {}; },
-    displayMessageForm: (id) => toParent({ t: "open", id }),
+    displayMessageForm: (id) => popOpen(id),
     displayNewMessageForm: (o) => toParent({ t: "newmsg", o }),
   };
   const $ = (id) => document.getElementById(id);
@@ -339,7 +362,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     RS().set(k, v);
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try { RS().saveAsync(); } catch (e) { /* ignore */ } }, 0);
-    if (!POPOUT && popDialog) pushPopout();
+    if (!POPOUT && popAlive()) pushPopout();
   }
   function rsRemove(k) { try { RS().remove(k); } catch (e) { /* ignore */ } }
 
@@ -486,6 +509,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (POPOUT) { safely("popout", startPopout); return; }
     if (info.host !== Office.HostType.Outlook) return;
     safely("ItemChanged", () => MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem));
+    // several Outlook windows can have My Notes open: one of them (the newest alive) answers the pop-out over localStorage
+    safely("leader", () => { leaderTick(true); setInterval(() => leaderTick(false), 5000); });
+    window.addEventListener("storage", (ev) => {
+      if (ev.key !== "myNotesPopCmd" || !ev.newValue || !isLeader()) return;
+      safely("popCmd", () => { const m = JSON.parse(ev.newValue); if (Date.now() - (m.at || 0) < 10000) onPopMessage(ev.newValue); });
+    });
     safely("drop", wireDrop);
     safely("wireUi", wireUi);
     safely("statusPicker", buildStatusPicker);
@@ -518,7 +547,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     return { t: "snap", d, cur };
   }
   function pushPopout() {
-    if (!popDialog) return;
+    if (!popAlive()) return;
     clearTimeout(popTimer);
     popTimer = setTimeout(() => {
       const msg = JSON.stringify(popPayload());
@@ -526,8 +555,36 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       safely("popLS", () => { const ls = localStore(); if (ls) ls.setItem("myNotesPop", msg); });
     }, 120);
   }
+  const popSeen = new Set();
+  const paneId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  function leaderTick(claim) {
+    const ls = localStore();
+    if (!ls) return;
+    let l = null;
+    try { l = JSON.parse(ls.getItem("myNotesLeader") || "null"); } catch (e) { l = null; }
+    if (claim || !l || l.id === paneId || Date.now() - (l.at || 0) > 12000) ls.setItem("myNotesLeader", JSON.stringify({ id: paneId, at: Date.now() }));
+  }
+  function isLeader() {
+    try { const l = JSON.parse((localStore() || { getItem: () => null }).getItem("myNotesLeader") || "null"); return !l || l.id === paneId; } catch (e) { return true; }
+  }
+  function popAlive() {
+    if (popDialog) return true;
+    try { const ls = localStore(); return !!ls && Date.now() - Number(ls.getItem("myNotesPopAlive") || 0) < 15000; } catch (e) { return false; }
+  }
+  function ackPop(m, okk, err) {
+    const raw = JSON.stringify({ t: "ack", mid: m.mid, ok: okk, err: err || "" });
+    if (popDialog) { try { popDialog.messageChild(raw); } catch (e) { /* older Outlook */ } }
+    safely("ackLS", () => { const ls = localStore(); if (ls) ls.setItem("myNotesPopAck", raw); });
+  }
   function onPopMessage(raw) {
     const m = JSON.parse(raw);
+    if (m.mid) {
+      if (popSeen.has(m.mid)) return;
+      popSeen.add(m.mid);
+
+    }
+    if (m.t === "open") { openEmail(m.id, (okk, err) => ackPop(m, okk, err)); return; }
+    if (m.mid && m.t !== "ready") ackPop(m, true);
     if (m.t === "ready") pushPopout();
     else if (m.t === "set") {
       RS().set(m.k, m.v); clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { RS().saveAsync(); } catch (e) { /* ignore */ } }, 0);
@@ -536,7 +593,6 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       refreshBadges();
       if (tab === "tag") renderTags(); else if (tab === "today") renderToday(); else if (tab === "all") renderIndex();
     } else if (m.t === "remove") { rsRemove(m.k); refreshBadges(); }
-    else if (m.t === "open") openEmail(m.id);
     else if (m.t === "newmsg") { try { MB().displayNewMessageForm(m.o); } catch (e) { toast("Couldn't open a new email"); } }
     else if (m.t === "close") { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; document.body.classList.remove("popped"); }
   }
@@ -547,8 +603,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     safely("statusPicker", buildStatusPicker);
     safely("summaryUi", buildSummaryUi);
     safely("rail", wireRail);
+    const beat = () => { try { window.localStorage.setItem("myNotesPopAlive", String(Date.now())); } catch (e) { /* blocked */ } };
+    beat(); setInterval(beat, 5000);
+    window.addEventListener("beforeunload", () => { try { window.localStorage.removeItem("myNotesPopAlive"); } catch (e) { /* blocked */ } });
     const take = (raw) => safely("snap", () => {
       const m = JSON.parse(raw);
+      if (m && m.t === "ack") { popAck(m); return; }
       if (!m || m.t !== "snap") return;
       const first = !Object.keys(popSnap).length;
       popSnap = m.d || {}; idxCache = null; prefsCache = null;
@@ -562,7 +622,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (tab === "tag") renderTags(); else if (tab === "today") renderToday(); else if (tab === "all") renderIndex(); else if (tab === "sum") renderSummaryInfo();
     });
     try { Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, (arg) => take(arg.message)); } catch (e) { /* older Outlook */ }
-    window.addEventListener("storage", (ev) => { if (ev.key === "myNotesPop" && ev.newValue) take(ev.newValue); });
+    window.addEventListener("storage", (ev) => { if ((ev.key === "myNotesPop" || ev.key === "myNotesPopAck") && ev.newValue) take(ev.newValue); });
     safely("popLS", () => { const ls = localStore(); const v = ls && ls.getItem("myNotesPop"); if (v) take(v); });
     $("popCurGo").onclick = () => { if (popCur) followOpenedEmail(popCur.labels, true, true); };
     toParent({ t: "ready" });
@@ -1474,10 +1534,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     replyCands = [];
     renderReply();
   }
-  function openEmail(id) {
+  function openEmail(id, done) {
+    const fail = (why) => { if (done) done(false, why); else toast("Couldn't open it. The email may have been moved or deleted."); };
+    if (POPOUT) { popOpen(id); return; }
     safely("openedFlag", () => { const ls = localStore(); if (ls) ls.setItem("myNotesOpened", JSON.stringify({ id, at: Date.now() })); });
-    try { MB().displayMessageForm(id); }
-    catch (e) { toast("Couldn't open it. The email may have been moved or deleted."); }
+    try {
+      const mb = MB();
+      if (mb.displayMessageFormAsync) mb.displayMessageFormAsync(id, (r) => (ok(r) ? done && done(true) : fail(r.error && r.error.message)));
+      else { mb.displayMessageForm(id); if (done) done(true); }
+    } catch (e) { fail(e && e.message); }
   }
 
   // ===================================================================
