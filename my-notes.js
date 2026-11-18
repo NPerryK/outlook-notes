@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.9.0";
+  const VERSION = "3.9.1";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -525,7 +525,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     setTimeout(() => safely("cdfLink", wireCdfLink), 0); // optional; must not delay the notes
   });
   // ----- pop-out window: the same app, fed by the pane -----
-  let popDialog = null, popTimer = 0;
+  let popDialog = null, popTimer = 0, popPing = 0;
+  // the window only works while this pane is alive: when the pane closes or reloads, close the window with it
+  ["pagehide", "beforeunload"].forEach((ev) => window.addEventListener(ev, () => { if (popDialog) { try { popDialog.close(); } catch (e) { /* ignore */ } } }));
   function openPopout() {
     if (popDialog) { toast("The My Notes window is already open"); return; }
     const url = location.href.split("#")[0].split("?")[0] + "?popout=1&v=" + VERSION;
@@ -537,6 +539,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         popDialog.addEventHandler(Office.EventType.DialogEventReceived, () => { popDialog = null; unpop(); });
         document.body.classList.add("popped");
         renderPopped();
+        clearInterval(popPing);
+        popPing = setInterval(() => { if (popDialog) { try { popDialog.messageChild(JSON.stringify({ t: "ping" })); } catch (e) { /* ignore */ } } else clearInterval(popPing); }, 3000);
       });
     } catch (e) { toast("Couldn't open a window here"); }
   }
@@ -668,6 +672,19 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     renderAll();
     renderRequests();
   }
+  // The pane in Outlook was closed or reloaded: this window can't read or save anything any more.
+  let lostT = 0, lostKept = false;
+  function popLost() {
+    const o = $("popLost");
+    if (!o || !o.hidden || lostKept) return;
+    o.hidden = false;
+    let n = 15;
+    $("popLostN").textContent = n;
+    clearInterval(lostT);
+    lostT = setInterval(() => { n--; $("popLostN").textContent = n; if (n <= 0) { clearInterval(lostT); closeSelf(); } }, 1000);
+  }
+  function popFound() { lostKept = false; const o = $("popLost"); if (o && !o.hidden) { o.hidden = true; clearInterval(lostT); } }
+  function closeSelf() { toParent({ t: "close" }); try { window.close(); } catch (e) { /* not allowed */ } }
   function startPopout() {
     document.body.classList.add("popout");
     document.title = "My Notes";
@@ -678,8 +695,12 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const beat = () => { try { window.localStorage.setItem("myNotesPopAlive", String(Date.now())); } catch (e) { /* blocked */ } };
     beat(); setInterval(beat, 5000);
     window.addEventListener("beforeunload", () => { try { window.localStorage.removeItem("myNotesPopAlive"); } catch (e) { /* blocked */ } });
+    let lastHeard = Date.now();
+    setInterval(() => { if (Date.now() - lastHeard > 10000) popLost(); }, 2000);
     const take = (raw) => safely("snap", () => {
       const m = JSON.parse(raw);
+      lastHeard = Date.now(); popFound();
+      if (m && m.t === "ping") return;
       if (m && m.t === "ack") { popAck(m); return; }
       if (!m || m.t !== "snap") return;
       const first = !Object.keys(popSnap).length;
@@ -1986,7 +2007,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     $("railOpen").onclick = () => { const st = getTagStore(); st.rail = true; saveTagStore(st); renderRail(); };
     $("railAll").onclick = () => { openTagName = null; switchTab("tag"); renderRail(); };
     const grip = $("railGrip");
-    const maxW = () => Math.max(RAIL_MIN, Math.min(RAIL_MAX, window.innerWidth - 230));
+    const maxW = () => Math.max(RAIL_MIN, Math.min(RAIL_MAX, window.innerWidth - 200));
     const setW = (w) => { w = Math.round(Math.max(RAIL_MIN, Math.min(maxW(), w))); document.documentElement.style.setProperty("--railw", w + "px"); return w; };
     const saveW = (w) => { const st = getTagStore(); st.railW = w; saveTagStore(st); };
     let dragging = false, lastW = 0;
@@ -2160,7 +2181,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     document.body.classList.toggle("rail-on", on);
     document.body.classList.toggle("rail-min", !on);
     if (!on) return;
-    const w = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.min(st.railW || RAIL_DEF, Math.max(RAIL_MIN, window.innerWidth - 230))));
+    const w = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.min(st.railW || (window.innerWidth < 380 ? 80 : RAIL_DEF), Math.max(RAIL_MIN, window.innerWidth - 200))));
     document.documentElement.style.setProperty("--railw", w + "px");
     $("railGrip").setAttribute("aria-valuenow", w);
     const stats = tagStats();
@@ -3454,6 +3475,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const closePop = () => { if (popDialog) { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; } unpop(); };
     $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : popDialog ? closePop() : openPopout());
     $("popBack").onclick = closePop;
+    $("popLostClose").onclick = () => closeSelf();
+    $("popLostKeep").onclick = () => { clearInterval(lostT); lostKept = true; $("popLost").hidden = true; };
     const jmp = $("tagJump");
     jmp.checked = getTagStore().jump !== false;
     jmp.onchange = () => { const st = getTagStore(); st.jump = jmp.checked; saveTagStore(st); };

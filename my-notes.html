@@ -158,7 +158,7 @@
     .st[aria-pressed="true"] { color: var(--ink); font-weight: 600; background: color-mix(in srgb, var(--c) 18%, transparent);
       box-shadow: inset 0 -2px 0 var(--c); }
     .due-input { border: 1px solid var(--rule); border-radius: 5px; padding: 2px 5px; background: var(--sheet); font-size: 12px; }
-    .due-chips { display: inline-flex; gap: 3px; }
+    .due-chips { display: inline-flex; flex-wrap: wrap; gap: 3px; min-width: 0; }
     .due-chips button { border: 1px solid var(--rule); background: none; border-radius: 10px; padding: 0 7px; line-height: 19px;
       font-size: 11.5px; color: var(--ink2); }
     .due-chips button:hover { border-color: var(--frame); color: var(--ink); }
@@ -173,7 +173,8 @@
     #attSel { flex: 1; min-width: 0; border: 1px solid var(--rule); border-radius: 5px; padding: 2px 4px; background: var(--sheet); font-size: 12px; }
     .cfoot { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 7px 10px; border-top: 1px solid var(--rule2); }
     .cfoot .space-note { font-size: 11px; color: var(--warn); }
-    .cfoot-tools { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .cfoot-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+    .cfoot-btns { flex-wrap: wrap; }
     .cfoot-btns { display: flex; gap: 6px; margin-inline-start: auto; }
     .cfoot .spacer { flex: 1; }
     .kbd-hint { font-size: 11px; color: var(--ink3); }
@@ -409,6 +410,12 @@
     .rq .req-meta:empty { display: none; }
     .rq-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; border-top: 1px solid var(--rule2); flex-wrap: wrap; }
     .rq-foot .linkbtn { margin-inline-start: auto; }
+    .pop-lost { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.55); }
+    .pop-lost[hidden] { display: none; }
+    .pop-lost-box { max-width: 380px; padding: 18px; border-radius: 10px; background: var(--paper); border: 1px solid var(--frame); }
+    .pop-lost-box h2 { margin: 0 0 6px; font-size: 15px; }
+    .pop-lost-box p { margin: 0 0 10px; font-size: 12.5px; color: var(--ink2); }
+    .pop-lost-btns { display: flex; gap: 8px; flex-wrap: wrap; }
     /* pane while My Notes is in its own window */
     .popped-card { display: none; }
     body.popped:not(.popout) .popped-card { display: block; margin: 12px 0; padding: 14px; border: 1px solid var(--frame); border-radius: 8px; background: var(--sheet); }
@@ -551,7 +558,7 @@
     body.rail-min .rail-open { display: inline-flex; }
     body.rail-on .tab { padding-inline: 5px; font-size: 12px; }
     body.rail-min { padding-inline-start: 20px; }
-    @media (max-width: 339px) { body.rail-on .rail, body.rail-min .rail-open { display: none; } body.rail-on, body.rail-min { padding-inline-start: 0; } }
+    @media (max-width: 279px) { body.rail-on .rail, body.rail-min .rail-open { display: none; } body.rail-on, body.rail-min { padding-inline-start: 0; } }
     /* loading */
     .loadbox { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: 6px;
       background: var(--sheet); font-size: 12px; color: var(--ink2); }
@@ -610,6 +617,14 @@
       <button class="ibtn sm" id="kbdHelp" title="Keyboard shortcuts (Alt+/)" aria-label="Keyboard shortcuts"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="8.5" rx="1.5"/><path d="M4.5 7h1M7.5 7h1M10.5 7h1M4.5 9.5h7"/></svg></button>
     </div>
 
+    <div class="pop-lost" id="popLost" hidden role="alertdialog" aria-labelledby="popLostT">
+      <div class="pop-lost-box">
+        <h2 id="popLostT">Lost the connection to Outlook</h2>
+        <p>My Notes was closed or reloaded in Outlook, so this window can't show or save anything now. Open My Notes in Outlook and click the window button again.</p>
+        <p class="muted">Closing in <span id="popLostN">15</span>s</p>
+        <div class="pop-lost-btns"><button class="btn primary" id="popLostClose" type="button">Close this window</button><button class="btn" id="popLostKeep" type="button">Keep it open</button></div>
+      </div>
+    </div>
     <div class="popped-card" id="poppedCard">
       <h2>My Notes is in its own window</h2>
       <p>Everything works there, including notes on this email. Keep this pane open so the window can save.</p>
@@ -945,6 +960,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.9.0"></script>
+  <script src="my-notes.js?v=3.9.1"></script>
 </body>
 </html>
