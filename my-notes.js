@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.9.1";
+  const VERSION = "3.9.2";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -378,7 +378,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       const old = rsGet(OLD_IDX_KEY);
       if (old && typeof old === "object") { idx = old; idxCache = idx; setIndex(idx); } // migrate 1.x
     }
+    if (!idx || typeof idx !== "object" || Array.isArray(idx)) idx = {};
     let stale = false;
+    Object.keys(idx).forEach((k) => { if (!idx[k] || typeof idx[k] !== "object") { delete idx[k]; stale = true; return; } if (!Array.isArray(idx[k].n)) idx[k].n = []; });
     Object.keys(idx).forEach((k) => { if (idx[k].draft && Date.now() - (idx[k].u || 0) > 21 * DAY) { delete idx[k]; stale = true; } });
     idxCache = idx;
     if (stale) setIndex(idx);
@@ -502,11 +504,31 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // Current item: load, save
   // ===================================================================
   // One failing part of the start-up must never leave the pane empty, so each step runs on its own.
+  const startErrors = [];
   function safely(name, fn) {
-    try { return fn(); } catch (e) { try { console.error("My Notes: " + name + " failed", e); } catch (x) { /* no console */ } return undefined; }
+    try { return fn(); } catch (e) {
+      try { console.error("My Notes: " + name + " failed", e); } catch (x) { /* no console */ }
+      if (!started) { startErrors.push(name + ": " + ((e && e.message) || e)); showStartProblem(); }
+      return undefined;
+    }
   }
+  let started = false;
+  // If something stops My Notes from starting, say so (with the reason) instead of sitting on "Loading…"
+  function showStartProblem(waiting) {
+    const box = document.getElementById("startBox");
+    if (!box) return;
+    box.hidden = false;
+    document.getElementById("startText").textContent = waiting
+      ? "Outlook hasn't started My Notes yet. This usually fixes itself with Reload."
+      : "Something went wrong while starting My Notes.";
+    document.getElementById("startWhy").textContent = startErrors.slice(-3).join(" · ");
+  }
+  try { document.getElementById("ver").textContent = "v" + VERSION; } catch (e) { /* page not ready */ }
+  window.addEventListener("error", (ev) => { if (!started) { startErrors.push((ev.message || "error") + (ev.lineno ? " @" + ev.lineno : "")); showStartProblem(); } });
+  const startWatch = setTimeout(() => { if (!started) showStartProblem(true); }, 10000);
   Office.onReady((info) => {
-    if (POPOUT) { safely("popout", startPopout); return; }
+    clearTimeout(startWatch);
+    if (POPOUT) { safely("popout", startPopout); started = true; return; }
     if (info.host !== Office.HostType.Outlook) return;
     safely("ItemChanged", () => MB().addHandlerAsync(Office.EventType.ItemChanged, loadItem));
     // several Outlook windows can have My Notes open: one of them (the newest alive) answers the pop-out over localStorage
@@ -522,6 +544,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     safely("rail", wireRail);
     safely("index", getIndex); // migrates the 1.x overview if needed
     safely("loadItem", loadItem);
+    setTimeout(() => { started = true; if (!startErrors.length) { const b = $("startBox"); if (b) b.hidden = true; } }, 1500);
     setTimeout(() => safely("cdfLink", wireCdfLink), 0); // optional; must not delay the notes
   });
   // ----- pop-out window: the same app, fed by the pane -----
@@ -1695,7 +1718,10 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // Labels
   // ===================================================================
   function getTagStore() {
-    const st = rsGet(TAGS_KEY);
+    let st = rsGet(TAGS_KEY);
+    if (!st || typeof st !== "object" || Array.isArray(st)) st = {};
+    ["names", "removed"].forEach((k) => { if (k in st && !Array.isArray(st[k])) delete st[k]; });
+    ["renamed", "stages", "gcc"].forEach((k) => { if (k in st && (!st[k] || typeof st[k] !== "object")) delete st[k]; });
     return Object.assign({ names: [], renamed: {}, removed: [], cats: true, hasNotes: true, stages: {}, byStage: false, autoLabel: true, sort: "attention", sortDir: "", rail: true, jump: true }, st || {});
   }
   const stageOf = (name, st) => { const k = Object.keys((st || getTagStore()).stages).find((x) => lc(x) === lc(name)); return k ? STAGES.find((g) => g.id === (st || getTagStore()).stages[k]) || null : null; };
@@ -2409,7 +2435,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       prefixes: "CDF", dueTop: true, to: (MB().userProfile || {}).emailAddress || "",
       cols: EXCEL_COLS.map((c) => ({ k: c[0], on: !EXCEL_DEFAULT_OFF.includes(c[0]) })), header: true, onlyChanged: false, lastCopy: 0, waitAlert: 3,
     };
-    const out = Object.assign(d, p || {});
+    const out = Object.assign(d, p && typeof p === "object" && !Array.isArray(p) ? p : {});
     // keep column list complete if new columns were added
     const have = new Set(out.cols.map((c) => c.k));
     EXCEL_COLS.forEach((c) => { if (!have.has(c[0])) out.cols.push({ k: c[0], on: false }); });
@@ -3516,6 +3542,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       toast(st.cats ? "Labels now show as categories" : "Label categories turned off");
     };
     $("ver").textContent = "v" + VERSION;
+    $("startReload").onclick = () => location.reload();
+    $("startCopy").onclick = () => copyPlain("My Notes v" + VERSION + "\n" + navigator.userAgent + "\n" + startErrors.join("\n")).then((y) => toast(y ? "Details copied" : "Couldn't copy"));
     $("kbdHelp").onclick = showShortcuts;
     document.addEventListener("keydown", onGlobalKey, true);
     window.addEventListener("resize", () => { const r = $("quickRow"); r.classList.toggle("fade", r.scrollWidth > r.clientWidth + 2); });

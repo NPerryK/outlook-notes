@@ -410,6 +410,10 @@
     .rq .req-meta:empty { display: none; }
     .rq-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; border-top: 1px solid var(--rule2); flex-wrap: wrap; }
     .rq-foot .linkbtn { margin-inline-start: auto; }
+    .startbox { margin: 0 0 10px; padding: 10px; border: 1px solid var(--danger); border-radius: 6px; background: var(--danger-soft); font-size: 12.5px; }
+    .startbox[hidden] { display: none; }
+    .startwhy { margin: 4px 0 8px; font-size: 11px; color: var(--ink2); word-break: break-word; }
+    .startbtns { display: flex; gap: 8px; }
     .pop-lost { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.55); }
     .pop-lost[hidden] { display: none; }
     .pop-lost-box { max-width: 380px; padding: 18px; border-radius: 10px; background: var(--paper); border: 1px solid var(--frame); }
@@ -617,6 +621,14 @@
       <button class="ibtn sm" id="kbdHelp" title="Keyboard shortcuts (Alt+/)" aria-label="Keyboard shortcuts"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="8.5" rx="1.5"/><path d="M4.5 7h1M7.5 7h1M10.5 7h1M4.5 9.5h7"/></svg></button>
     </div>
 
+    <div class="startbox" id="startBox" role="alert" hidden>
+      <strong id="startText">Something went wrong while starting My Notes.</strong>
+      <div class="startwhy" id="startWhy"></div>
+      <div class="startbtns">
+        <button class="btn sm primary" id="startReload" type="button" onclick="location.reload()">Reload</button>
+        <button class="btn sm" id="startCopy" type="button">Copy details</button>
+      </div>
+    </div>
     <div class="pop-lost" id="popLost" hidden role="alertdialog" aria-labelledby="popLostT">
       <div class="pop-lost-box">
         <h2 id="popLostT">Lost the connection to Outlook</h2>
@@ -960,6 +972,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.9.1"></script>
+  <script src="my-notes.js?v=3.9.2"></script>
 </body>
 </html>
