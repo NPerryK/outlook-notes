@@ -392,6 +392,31 @@
     .req-btns { margin-inline-start: auto; display: flex; align-items: center; gap: 10px; }
     .req-ok { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ok); font-weight: 500; }
     .reqs-more { margin: 2px 0 0; }
+    /* requests found in the email */
+    .reqs.rq { padding: 6px 8px; }
+    .rq-head { display: flex; align-items: center; gap: 6px; min-height: 26px; }
+    .req-sum { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 0; text-align: start; color: var(--ink); font-size: 12.5px; }
+    .req-sum .req-what { font-weight: 600; min-width: 0; }
+    .req-sum.done { color: var(--ok); font-weight: 500; }
+    .req-chev { color: var(--ink3); display: inline-flex; flex: none; }
+    .req-added { font-size: 11px; color: var(--ok); flex: none; }
+    .req-quick { flex: none; }
+    .rq .req { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: start; padding: 6px 0; border-top: 1px solid var(--rule2); }
+    .rq .req input { margin: 3px 0 0; accent-color: var(--blue); }
+    .rq .req-text { padding: 0; border: 0; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .rq .req.off .req-text { color: var(--ink3); text-decoration: line-through; text-decoration-color: var(--rule); }
+    .rq .req-meta { grid-column: 2; margin-top: 2px; min-height: 0; }
+    .rq .req-meta:empty { display: none; }
+    .rq-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; border-top: 1px solid var(--rule2); flex-wrap: wrap; }
+    .rq-foot .linkbtn { margin-inline-start: auto; }
+    /* pane while My Notes is in its own window */
+    .popped-card { display: none; }
+    body.popped:not(.popout) .popped-card { display: block; margin: 12px 0; padding: 14px; border: 1px solid var(--frame); border-radius: 8px; background: var(--sheet); }
+    body.popped:not(.popout) .app > :not(.popped-card):not(.brand), body.popped:not(.popout) main, body.popped:not(.popout) .rail, body.popped:not(.popout) .rail-open { display: none !important; }
+    body.popped:not(.popout) { padding-inline-start: 0 !important; }
+    .popped-card h2 { margin: 0 0 4px; font-size: 14px; }
+    .popped-card p { margin: 0 0 10px; font-size: 12px; color: var(--ink2); }
+    .popped-card .subj { font-weight: 600; font-size: 12.5px; margin-bottom: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ---------- dossier ---------- */
     .dos-strip { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--frame); border-radius: 3px; background: var(--sheet); margin: 10px 0 2px; }
@@ -538,7 +563,7 @@
     @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
     body.is-loading #view-item .composer, body.is-loading #notes, body.is-loading #elRow { opacity: .6; pointer-events: none; }
     /* pop-out window */
-    body.popout .tb, body.popout #tab-item, body.popout #kbdHelp { display: none; }
+    body.popout #kbdHelp { display: none; }
     body.popout #popBtn svg { transform: rotate(180deg); }
     .pop-cur { display: none; align-items: center; gap: 6px; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--frame); border-radius: 6px; background: var(--sheet); font-size: 12px; }
     body.popout .pop-cur:not([hidden]) { display: flex; }
@@ -585,11 +610,12 @@
       <button class="ibtn sm" id="kbdHelp" title="Keyboard shortcuts (Alt+/)" aria-label="Keyboard shortcuts"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="8.5" rx="1.5"/><path d="M4.5 7h1M7.5 7h1M10.5 7h1M4.5 9.5h7"/></svg></button>
     </div>
 
-    <div class="pop-cur" id="popCur" hidden>
-      <span class="pop-cur-k">Open in Outlook:</span><bdi id="popCurS"></bdi>
-      <button class="linkbtn" id="popCurGo" type="button">Its label</button>
+    <div class="popped-card" id="poppedCard">
+      <h2>My Notes is in its own window</h2>
+      <p>Everything works there, including notes on this email. Keep this pane open so the window can save.</p>
+      <div class="subj"><bdi id="poppedSubj"></bdi></div>
+      <button class="btn primary" id="popBack" type="button">Bring it back here</button>
     </div>
-    <div class="popped-note">My Notes is open in its own window.</div>
     <div class="tb" role="group" aria-label="Current item">
       <div class="tb-subj"><span class="ic" id="tbIcon"></span><div id="subject">Loading…</div></div>
       <div class="tb-row">
@@ -636,11 +662,14 @@
         <button class="linkbtn" id="replyDismiss">Not now</button>
       </div>
 
-      <div class="reqs" id="reqBox" hidden>
-        <div class="reqs-h"><span class="ic"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9.5h3v3.5H3zM3 9.5c0-3 1-4.5 3-5"/><path d="M9.5 9.5h3v3.5h-3zM9.5 9.5c0-3 1-4.5 3-5"/></svg></span><span id="reqTitle"></span>
-          <button class="linkbtn small" id="reqAll">Track all</button></div>
+      <div class="reqs rq" id="reqBox" hidden>
+        <div class="rq-head" id="reqHead"></div>
         <ul id="reqList"></ul>
-        <button class="linkbtn small reqs-more" id="reqMore" hidden></button>
+        <div class="rq-foot" id="reqFoot" hidden>
+          <button class="btn sm primary" id="reqAdd">Add to my court</button>
+          <button class="btn sm" id="reqOne" hidden title="One note with all of them as a list">As one note</button>
+          <button class="linkbtn small" id="reqIgnore">Not requests</button>
+        </div>
       </div>
 
       <div class="reqs hand" id="handBox" hidden>
@@ -916,6 +945,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.8.2"></script>
+  <script src="my-notes.js?v=3.9.0"></script>
 </body>
 </html>

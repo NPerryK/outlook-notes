@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.8.2";
+  const VERSION = "3.9.0";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -107,7 +107,6 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   let draftKey = null;     // key of the open draft (compose mode)
   let person = null;       // {name, first} – sender (read) or first recipient (compose)
   let requests = [];       // sentences in the email body that look like requests
-  let reqMore = false;     // show all requests
   let lblOff = [];         // labels the user removed from this email (auto-label skips them)
   const openHist = new Set();
 
@@ -297,6 +296,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (n.since) o.w = t36(n.since);
     if (n.who) o.wh = n.who;
     if (n.q) o.q = n.q;
+    if (n.qs && n.qs.length > 1) o.qs = n.qs;
     if (n.hist && n.hist.length) o.h = n.hist.map((x) => [x.t, t36(x.u)]);
     return o;
   }
@@ -307,7 +307,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       due: o.d || "", tags: o.g || [], att: o.a || "",
       prev: o.p != null && STATUS[o.p] ? STATUS[o.p].hex : undefined,
       created: cr, updated: o.u ? f36(o.u) : cr, doneAt: o.dn ? f36(o.dn) : undefined, since: o.w ? f36(o.w) : undefined,
-      who: o.wh || "", q: o.q || "",
+      who: o.wh || "", q: o.q || "", qs: Array.isArray(o.qs) ? o.qs : undefined,
       hist: (o.h || []).map((x) => ({ t: x[0], u: f36(x[1]) })),
     };
   }
@@ -453,7 +453,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     return ctx.item.internetMessageId || ctx.item.itemId;
   }
   function updateIndex() {
-    if (!ctx) return;
+    if (!ctx || POPOUT) return; // the pane updates the overview when it saves
     const id = ctx.compose ? composeId : ctx.item.itemId;
     const key = currentKey();
     if (!id || !key) return;
@@ -534,19 +534,33 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
         if (!ok(r)) { toast("Couldn't open a window: " + ((r.error && r.error.message) || "not supported here")); return; }
         popDialog = r.value;
         popDialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => safely("popMsg", () => onPopMessage(arg.message)));
-        popDialog.addEventHandler(Office.EventType.DialogEventReceived, () => { popDialog = null; document.body.classList.remove("popped"); });
+        popDialog.addEventHandler(Office.EventType.DialogEventReceived, () => { popDialog = null; unpop(); });
         document.body.classList.add("popped");
+        renderPopped();
       });
     } catch (e) { toast("Couldn't open a window here"); }
+  }
+  function unpop() { document.body.classList.remove("popped"); safely("render", renderAll); refreshBadges(); if (tab === "tag") renderTags(); }
+  function renderPopped() {
+    const s = $("poppedSubj");
+    if (s) s.textContent = ctx ? subject || "(no subject)" : "No email selected";
   }
   function popPayload() {
     const d = {};
     ROAM_KEYS.forEach((k) => { const v = rsGet(k); if (v !== undefined) d[k] = v; });
     d.__me = { emailAddress: (MB().userProfile || {}).emailAddress || "", displayName: (MB().userProfile || {}).displayName || "" };
-    const cur = ctx && !ctx.compose ? { key: currentKey(), id: ctx.item.itemId, s: subject, labels: unionTags(emailTags, notes.flatMap((n) => n.tags)) } : null;
+    let cur = null;
+    if (ctx && props) {
+      const pv = {};
+      [PROP_KEY, LBL_KEY, DKEY_PROP].forEach((k) => { const v = props.get(k); if (v !== undefined && v !== null) pv[k] = v; });
+      cur = { key: currentKey(), id: ctx.item.itemId, imid: ctx.item.internetMessageId || "", s: subject, labels: unionTags(emailTags, notes.flatMap((n) => n.tags)),
+        compose: ctx.compose, meeting: ctx.meeting, conv: ctx.conv, att: ctx.attachments, received: ctx.received || 0, fromName: ctx.fromName || "",
+        cp: ctx.cp || "", ca: ctx.ca || "", composeId, person, requests, pv };
+    } else if (ctx) cur = { key: currentKey(), s: subject, labels: [], loading: true };
     return { t: "snap", d, cur };
   }
   function pushPopout() {
+    safely("popped", renderPopped);
     if (!popAlive()) return;
     clearTimeout(popTimer);
     popTimer = setTimeout(() => {
@@ -584,6 +598,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 
     }
     if (m.t === "open") { openEmail(m.id, (okk, err) => ackPop(m, okk, err)); return; }
+    if (m.t === "props") { ackPop(m, applyPopProps(m), ""); return; }
     if (m.mid && m.t !== "ready") ackPop(m, true);
     if (m.t === "ready") pushPopout();
     else if (m.t === "set") {
@@ -594,7 +609,64 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (tab === "tag") renderTags(); else if (tab === "today") renderToday(); else if (tab === "all") renderIndex();
     } else if (m.t === "remove") { rsRemove(m.k); refreshBadges(); }
     else if (m.t === "newmsg") { try { MB().displayNewMessageForm(m.o); } catch (e) { toast("Couldn't open a new email"); } }
-    else if (m.t === "close") { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; document.body.classList.remove("popped"); }
+    else if (m.t === "close") { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; unpop(); }
+  }
+  // the window changed this email's notes or labels: write them to the email here, where Outlook can save them
+  function applyPopProps(m) {
+    if (!props || !ctx || m.key !== currentKey()) { toast("That email isn't open in Outlook any more – change not saved"); return false; }
+    Object.keys(m.vals || {}).forEach((k) => { if (m.vals[k] === null) props.remove(k); else props.set(k, m.vals[k]); });
+    notes = decodeNotes(props.get(PROP_KEY));
+    try {
+      const lb = JSON.parse(props.get(LBL_KEY) || "null");
+      emailTags = lb && Array.isArray(lb.t) ? lb.t.filter((x) => typeof x === "string") : [];
+      lblOff = lb && Array.isArray(lb.x) ? lb.x.filter((x) => typeof x === "string").slice(-20) : [];
+      lblAt = (lb && lb.u) || lblAt;
+    } catch (e) { /* ignore */ }
+    if (m.vals[DKEY_PROP]) draftKey = m.vals[DKEY_PROP];
+    registerTags(unionTags(emailTags, notes.flatMap((n) => n.tags)));
+    persist(null);
+    renderAll();
+    pushPopout();
+    return true;
+  }
+  // in the window: the email open in Outlook, with notes that save through the pane
+  let popVals = {}, popDirty = {};
+  const popProps = {
+    get: (k) => popVals[k],
+    set: (k, v) => { popVals[k] = v; popDirty[k] = v; },
+    remove: (k) => { delete popVals[k]; popDirty[k] = null; },
+    saveAsync: (cb) => {
+      const vals = popDirty; popDirty = {};
+      if (popCur && Object.keys(vals).length) toParent({ t: "props", key: popCur.key, vals });
+      if (cb) cb({ status: "succeeded" });
+    },
+  };
+  function popLoadEmail(cur) {
+    if (!cur || cur.loading || !cur.pv) { ctx = null; props = null; notes = []; emailTags = []; renderAll(); return; }
+    const sameEmail = ctx && popCur && ctx.__key === cur.key;
+    const busy = editingId || ($("input") && $("input").value.trim());
+    const fresh = JSON.stringify(cur.pv) !== JSON.stringify(popVals);
+    if (sameEmail && (busy || !fresh)) { requests = cur.requests || []; renderRequests(); return; }
+    popVals = Object.assign({}, cur.pv); popDirty = {};
+    const item = { itemId: cur.id, internetMessageId: cur.imid, subject: cur.s, attachments: [] };
+    ctx = { item, meeting: cur.meeting, compose: cur.compose, conv: cur.conv, attachments: cur.att || [], received: cur.received, fromName: cur.fromName, cp: cur.cp, ca: cur.ca, __key: cur.key };
+    composeId = cur.composeId || null;
+    subject = cur.s || "";
+    person = cur.person || null;
+    props = popProps;
+    notes = decodeNotes(props.get(PROP_KEY));
+    draftKey = cur.compose ? props.get(DKEY_PROP) || null : null;
+    emailTags = []; lblOff = []; lblAt = 0;
+    try {
+      const lb = JSON.parse(props.get(LBL_KEY) || "null");
+      if (lb && Array.isArray(lb.t)) { emailTags = lb.t.filter((x) => typeof x === "string"); lblAt = lb.u || 0; }
+      if (lb && Array.isArray(lb.x)) lblOff = lb.x.filter((x) => typeof x === "string").slice(-20);
+    } catch (e) { /* ignore */ }
+    requests = cur.requests || [];
+    document.body.classList.toggle("is-compose", !!cur.compose && !cur.meeting);
+    if (!sameEmail) { editingId = null; resetComposer(); }
+    renderAll();
+    renderRequests();
   }
   function startPopout() {
     document.body.classList.add("popout");
@@ -614,8 +686,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       popSnap = m.d || {}; idxCache = null; prefsCache = null;
       const was = popCur && popCur.key;
       popCur = m.cur;
-      $("popCur").hidden = !popCur;
-      if (popCur) $("popCurS").textContent = popCur.s || "(no subject)";
+      safely("popEmail", () => popLoadEmail(popCur));
       if (first) switchTab("tag");
       if (popCur && popCur.key !== was) followOpenedEmail(popCur.labels, true);
       refreshBadges();
@@ -624,7 +695,6 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     try { Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, (arg) => take(arg.message)); } catch (e) { /* older Outlook */ }
     window.addEventListener("storage", (ev) => { if ((ev.key === "myNotesPop" || ev.key === "myNotesPopAck") && ev.newValue) take(ev.newValue); });
     safely("popLS", () => { const ls = localStore(); const v = ls && ls.getItem("myNotesPop"); if (v) take(v); });
-    $("popCurGo").onclick = () => { if (popCur) followOpenedEmail(popCur.labels, true, true); };
     toParent({ t: "ready" });
     switchTab("tag");
   }
@@ -637,7 +707,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const item = MB().item;
     const seq = ++loadSeq;
     clearTimeout(loadTimer);
-    editingId = null; composeId = null; showDone = false; replyCands = []; backupFound = null; requests = []; reqMore = false;
+    editingId = null; composeId = null; showDone = false; replyCands = []; backupFound = null; requests = [];
     openHist.clear();
     setLoading(false);
     if (!item) {
@@ -871,6 +941,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     return done;
   }
   function saveDraft(done) {
+    if (POPOUT) return done();
     const item = ctx.item;
     const finish = () => {
       if (!item.saveAsync) return done();
@@ -910,6 +981,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // Outlook categories and info bar
   // ===================================================================
   function categoriesSupported() {
+    if (POPOUT) return false; // the pane syncs categories when it saves
     return ctx && ctx.item.categories && Office.context.requirements.isSetSupported("Mailbox", "1.8");
   }
   function ensureMasterCategories(names, done) {
@@ -1303,7 +1375,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const seen = new Set();
     return out.filter((r) => (seen.has(r.q) ? false : seen.add(r.q))).slice(0, 8);
   }
-  const isTracked = (rq) => notes.some((n) => n.q === rq.q || hashText(n.text) === rq.q);
+  const isTracked = (rq) => notes.some((n) => n.q === rq.q || (n.qs && n.qs.includes(rq.q)) || hashText(n.text) === rq.q);
   function hiddenReqs() { const d = rsGet(DISMQ_KEY); return d && typeof d === "object" ? d : {}; }
   function detectRequests() {
     requests = [];
@@ -1319,26 +1391,6 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       });
     } catch (e) { renderRequests(); }
   }
-  function trackRequest(rq) {
-    const now = Date.now();
-    registerTags([]);
-    const ok2 = mutate(() => {
-      notes.push({ id: newId(), text: rq.text.slice(0, 300), color: rq.urgent ? URGENT_HEX : NOTE_HEX, due: rq.due || "", tags: [], att: "",
-        who: person ? person.first : "", q: rq.q, created: now, updated: now, hist: [] });
-    }, "Tracked – in your court");
-    if (ok2) renderRequests();
-    return ok2;
-  }
-  function trackAll() {
-    const todo = requests.filter((r) => !isTracked(r));
-    if (!todo.length) return;
-    const now = Date.now();
-    mutate(() => {
-      todo.forEach((rq, i) => notes.push({ id: newId() + i, text: rq.text.slice(0, 300), color: rq.urgent ? URGENT_HEX : NOTE_HEX, due: rq.due || "",
-        tags: [], att: "", who: person ? person.first : "", q: rq.q, created: now, updated: now, hist: [] }));
-    }, pl(todo.length, "request") + " tracked");
-    renderRequests();
-  }
   function hideRequest(rq) {
     const d = hiddenReqs(), key = currentKey();
     d[key] = (d[key] || []).concat([rq.q]).slice(-30);
@@ -1348,35 +1400,72 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     requests = requests.filter((x) => x.q !== rq.q);
     renderRequests();
   }
+  // Requests found in the email: a short checklist. Pick what is really a request, then add them to your court in one go.
+  let reqOpen = false, reqPick = {}, reqKeyShown = null;
   function renderRequests() {
     if (tab === "tag") safely("hereBar", renderHereBar);
     const box = $("reqBox");
     const pending = requests.filter((r) => !isTracked(r));
+    const added = requests.length - pending.length;
     box.hidden = !requests.length;
     if (!requests.length) return;
-    $("reqTitle").textContent = pending.length
-      ? (person ? person.first + " asked " : "Requests: ") + pl(pending.length, "thing")
-      : "All requests from " + (person ? person.first : "this email") + " are tracked";
-    $("reqAll").hidden = pending.length < 2;
+    const key = currentKey();
+    if (reqKeyShown !== key) { reqKeyShown = key; reqOpen = false; reqPick = {}; }
+    pending.forEach((r) => { if (reqPick[r.q] === undefined) reqPick[r.q] = true; });
+    const who = person ? person.first : "";
+    box.classList.toggle("all-done", !pending.length);
+    box.classList.toggle("open", reqOpen && pending.length > 0);
+    const head = $("reqHead");
+    head.innerHTML = "";
+    if (!pending.length) {
+      head.appendChild(h("span", { class: "req-sum done", html: svg("check", 13) + "<span>" + esc(pl(added, "request") + (who ? " from " + who : "") + " in your court") + "</span>" }));
+      $("reqList").innerHTML = ""; $("reqFoot").hidden = true;
+      return;
+    }
+    head.appendChild(h("button", { class: "req-sum", "aria-expanded": reqOpen ? "true" : "false", onclick: () => { reqOpen = !reqOpen; renderRequests(); } },
+      h("span", { class: "req-chev", html: svg(reqOpen ? "chevD" : "chevR", 12) }),
+      h("span", { class: "req-what", text: pl(pending.length, "request") + (who ? " from " + who : " in this email") }),
+      added ? h("span", { class: "req-added", text: added + " added" }) : null,
+      pending.some((r) => r.urgent) ? h("span", { class: "due overdue", text: "Urgent" }) : null));
+    if (!reqOpen) {
+      head.appendChild(h("button", { class: "btn sm primary req-quick", onclick: () => addPicked(pending), text: pending.length === 1 ? "Add to my court" : "Add all" }));
+      $("reqList").innerHTML = ""; $("reqFoot").hidden = true;
+      return;
+    }
     const list = $("reqList");
     list.innerHTML = "";
-    const show = reqMore ? requests : requests.slice(0, 3);
-    show.forEach((rq) => {
-      const done = isTracked(rq);
-      list.appendChild(h("li", { class: "req" + (done ? " tracked" : "") },
-        h("div", { class: "req-text", dir: "auto", text: rq.text }),
-        h("div", { class: "req-meta" },
+    pending.forEach((rq) => {
+      const id = "rq_" + rq.q;
+      list.appendChild(h("li", { class: "req" + (reqPick[rq.q] ? "" : " off") },
+        h("input", { type: "checkbox", id, checked: reqPick[rq.q] ? "checked" : null, onchange: (e) => { reqPick[rq.q] = e.target.checked; renderRequests(); } }),
+        h("label", { for: id, class: "req-text", dir: "auto", title: rq.text, text: rq.text }),
+        h("span", { class: "req-meta" },
           rq.urgent ? h("span", { class: "due overdue", text: "Urgent" }) : null,
-          rq.due ? h("span", { class: "due soon", html: svg("clock", 11) + "<span>" + esc(dueTs(rq.due) === startOfToday() ? "Today" : "By " + fmtShort(dueTs(rq.due))) + "</span>" }) : null,
-          h("span", { class: "req-btns" },
-            done ? h("span", { class: "req-ok", html: svg("check", 12) + "<span>Tracked</span>" })
-              : [h("button", { class: "linkbtn small", text: "Not a request", onclick: () => hideRequest(rq) }),
-                h("button", { class: "btn sm primary", html: svg("plus", 12) + "<span>Track</span>", onclick: () => trackRequest(rq) })]))));
+          rq.due ? h("span", { class: "due soon", html: svg("clock", 11) + "<span>" + esc(dueTs(rq.due) === startOfToday() ? "Today" : "By " + fmtShort(dueTs(rq.due))) + "</span>" }) : null)));
     });
-    const more = $("reqMore");
-    more.hidden = requests.length <= 3;
-    more.textContent = reqMore ? "Show fewer" : "Show " + (requests.length - 3) + " more";
-    $("reqBox").classList.toggle("all-done", !pending.length);
+    const n = pending.filter((r) => reqPick[r.q]).length;
+    $("reqFoot").hidden = false;
+    $("reqAdd").disabled = !n;
+    $("reqAdd").textContent = n ? (n === 1 ? "Add 1 to my court" : "Add " + n + " to my court") : "Pick what to add";
+    $("reqOne").hidden = n < 2;
+    $("reqIgnore").textContent = n === pending.length ? "Not requests" : "Ignore the rest";
+  }
+  function addPicked(list, asOne) {
+    if (!list.length) return;
+    const now = Date.now(), who = person ? person.first : "";
+    const urgent = list.some((r) => r.urgent);
+    const due = list.map((r) => r.due).filter(Boolean).sort()[0] || "";
+    registerTags([]);
+    const ok2 = mutate(() => {
+      if (asOne) {
+        notes.push({ id: newId(), text: list.map((r) => "• " + r.text.slice(0, 200)).join("\n").slice(0, 600), color: urgent ? URGENT_HEX : NOTE_HEX, due, tags: [], att: "",
+          who, q: list[0].q, qs: list.map((r) => r.q), created: now, updated: now, hist: [] });
+      } else {
+        list.forEach((rq, i) => notes.push({ id: newId() + (i ? i : ""), text: rq.text.slice(0, 300), color: rq.urgent ? URGENT_HEX : NOTE_HEX, due: rq.due || "",
+          tags: [], att: "", who, q: rq.q, created: now, updated: now, hist: [] }));
+      }
+    }, (asOne || list.length === 1 ? "Added to your court" : list.length + " added to your court") + (who ? " – asked by " + who : ""));
+    if (ok2) { reqOpen = false; renderRequests(); }
   }
 
   // ===================================================================
@@ -3362,7 +3451,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     fx.value = getTagStore().filesExt === undefined ? ".pdf" : getTagStore().filesExt;
     fx.onchange = () => { const st = getTagStore(); let v = fx.value.trim(); if (v && v[0] !== ".") v = "." + v; st.filesExt = v; fx.value = v; saveTagStore(st); toast("File type saved"); };
     gb.onchange = () => { const st = getTagStore(); st.gccBase = gb.value.trim() || GCC_DEF; saveTagStore(st); toast("GCC address saved"); };
-    $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : openPopout());
+    const closePop = () => { if (popDialog) { try { popDialog.close(); } catch (e) { /* ignore */ } popDialog = null; } unpop(); };
+    $("popBtn").onclick = () => (POPOUT ? toParent({ t: "close" }) : popDialog ? closePop() : openPopout());
+    $("popBack").onclick = closePop;
     const jmp = $("tagJump");
     jmp.checked = getTagStore().jump !== false;
     jmp.onchange = () => { const st = getTagStore(); st.jump = jmp.checked; saveTagStore(st); };
@@ -3384,8 +3475,15 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       toast(st.autoLabel ? "Emails join a label's dossier automatically" : "Automatic labels turned off");
       if (st.autoLabel && ctx && !ctx.compose) autoLabel();
     };
-    $("reqAll").onclick = trackAll;
-    $("reqMore").onclick = () => { reqMore = !reqMore; renderRequests(); };
+    const picked = () => requests.filter((r) => !isTracked(r) && reqPick[r.q]);
+    $("reqAdd").onclick = () => addPicked(picked());
+    $("reqOne").onclick = () => addPicked(picked(), true);
+    $("reqIgnore").onclick = () => {
+      const rest = requests.filter((r) => !isTracked(r) && (!reqPick[r.q] || $("reqIgnore").textContent === "Not requests"));
+      rest.forEach((r) => hideRequest(r));
+      reqOpen = false; renderRequests();
+      toast(rest.length === 1 ? "Ignored" : rest.length + " ignored");
+    };
     $("tagHasNotes").onchange = () => {
       const st = getTagStore(); st.hasNotes = $("tagHasNotes").checked; saveTagStore(st); syncCategory();
       toast(st.hasNotes ? "Emails with notes get the “📓 Notes” category" : "“📓 Notes” category turned off");
