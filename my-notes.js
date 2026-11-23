@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.9.2";
+  const VERSION = "3.9.3";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -1048,13 +1048,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     if (!categoriesSupported()) return;
     const item = ctx.item;
     const open = notes.filter((n) => !isDone(n));
-    const wanted = open.length ? [...new Set(open.map((n) => statusOf(n.color).name))]
-      : notes.length ? [statusOf(DONE_HEX).name] : [];
+    // done notes leave no mark on the email: no "Done" category, and "📓 Notes" only while something is open
+    const wanted = [...new Set(open.map((n) => statusOf(n.color).name))];
     if (open.some((n) => n.due)) wanted.push(FOLLOW.name);
     if (getTagStore().cats) unionTags(emailTags, notes.flatMap((n) => n.tags || [])).forEach((t) => wanted.push(TAG_PREFIX + t));
     const ours = new Set(ALL_CATS.map((l) => l.name).concat(OLD_NAMES));
     const isOurs = (n) => ours.has(n) || n.startsWith(TAG_PREFIX);
-    if (getTagStore().hasNotes && notes.length) wanted.push(HASNOTES.name);
+    if (getTagStore().hasNotes && open.length) wanted.push(HASNOTES.name);
     const my = ++catRun;
     const pass = (attempt) => item.categories.getAsync((r) => {
       if (!ok(r) || my !== catRun || !ctx || ctx.item !== item) return;
