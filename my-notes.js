@@ -10,7 +10,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   // ===================================================================
   // Configuration
   // ===================================================================
-  const VERSION = "3.9.3";
+  const VERSION = "4.0.0";
   const cdfLink = window.CdfLink;
   let cdfStatus = null, cdfPubTimer = 0;
   const PROP_KEY = "mailNotes";          // custom property on the item
@@ -788,6 +788,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     person = null;
     if (ctx.compose) {
       item.subject.getAsync((r) => { subject = ok(r) ? r.value || "" : ""; renderHeader(); renderTagComposer(); });
+      watchComposeSubject(item);
       try {
         item.to.getAsync((r) => {
           if (ok(r) && r.value && r.value.length) {
@@ -877,7 +878,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       refreshBadges();
       if (!ctx.compose && !ctx.meeting && !notes.length && !emailTags.length) recoverDraftNotes();
       if (!ctx.compose && !ctx.meeting) { autoLabel(); detectRequests(); }
-      if (ctx.compose && !ctx.meeting) safely("replyLabels", replyLabels);
+      if (ctx.compose && !ctx.meeting) { safely("replyLabels", replyLabels); safely("composeLabel", composeSubjectLabels); }
       renderHandover();
       if (!ctx.compose && !ctx.meeting) safely("gcc", learnGccIds);
       if (!ctx.compose) safely("jump", () => { if (!openedFromAddin()) followOpenedEmail(unionTags(emailTags, notes.flatMap((n) => n.tags))); });
@@ -1333,7 +1334,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (patch.reopen && isDone(n)) { n.color = n.prev && n.prev !== DONE_HEX ? n.prev : NOTE_HEX; delete n.prev; delete n.doneAt; if (isWait(n)) n.since = now; }
       n.updated = now;
     };
-    if (ctx && e.key === currentKey()) {
+    if (isLabelEntry(e)) {
+      labelNoteChange(e, noteId, (n) => { apply(n); return n; }, msg);
+    } else if (ctx && e.key === currentKey()) {
       mutate(() => { const n = notes.find((x) => x.id === noteId); if (n) apply(n); }, msg);
     } else {
       const idx = getIndex();
@@ -1556,25 +1559,37 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const st = getTagStore();
     hereLabels = (labels || []).slice();
     if (!force && st.jump === false) return;
+    if (!force && tab === "tag" && openTagName && labelPinned) { safely("hereBar", renderHereBar); return; } // you're working on a label
     if (editingId || (!fromPopout && $("input") && $("input").value.trim())) return; // don't pull you away from typing
     if (!hereLabels.length) { if (!POPOUT && tab === "tag") switchTab("item"); else if (POPOUT) renderTags(); return; }
     const stats = tagStats().filter((x) => hereLabels.some((l) => lc(l) === lc(x.name)));
     stats.sort((a, b) => b.late - a.late || b.mine - a.mine || b.open - a.open || Math.max(b.u, b.r) - Math.max(a.u, a.r));
     const pick = stats.length ? stats[0].name : hereLabels[0];
     switchTab("tag");
-    openTag(pick);
+    openTag(pick, true);
   }
   function renderHereBar() {
     const bar = $("hereBar");
     if (!bar) return;
     const cur = POPOUT ? (popCur && popCur.labels) || [] : ctx && !ctx.compose ? unionTags(emailTags, notes.flatMap((n) => n.tags)) : [];
     const show = cur.some((l) => openTagName && lc(l) === lc(openTagName));
+    const curSubj = POPOUT ? popCur && popCur.s : ctx && !ctx.compose ? subject : "";
+    if (!show && curSubj && labelPinned) {
+      // you stayed on your label; say which email is open in Outlook, and where it belongs
+      bar.hidden = false; bar.innerHTML = ""; bar.classList.add("other");
+      bar.appendChild(h("span", { class: "here-k", text: "Open in Outlook:" }));
+      bar.appendChild(h("bdi", { class: "here-subj", text: curSubj }));
+      cur.slice(0, 3).forEach((l) => bar.appendChild(h("button", { class: "here-chip", title: "Go to " + l, onclick: () => openTag(l, true) }, tagChip(l))));
+      if (!POPOUT && !cur.length) bar.appendChild(h("span", { class: "muted small", text: "no label" }));
+      return;
+    }
+    bar.classList.remove("other");
     bar.hidden = !show;
     if (!show) return;
     bar.innerHTML = "";
     bar.appendChild(h("span", { class: "here-k", text: cur.length > 1 ? "This email is in:" : "This email is in this label" }));
     if (cur.length > 1) cur.forEach((l) => bar.appendChild(h("button", { class: "here-chip" + (lc(l) === lc(openTagName) ? " on" : ""), "aria-pressed": lc(l) === lc(openTagName) ? "true" : "false",
-      onclick: () => openTag(l) }, tagChip(l))));
+      onclick: () => openTag(l, true) }, tagChip(l))));
     if (!POPOUT) {
       const reqs = (requests || []).filter((r) => !isTracked(r)).length;
       bar.appendChild(h("button", { class: "linkbtn here-notes", onclick: () => switchTab("item"),
@@ -1583,10 +1598,40 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   // the newest email we know of in an email's conversation (the email itself when it is the newest)
   function latestInThread(e) {
-    if (!e || !e.v.cv) return e;
+    if (!e || !e.v.cv || isLabelEntry(e)) return e;
     let best = e;
     allEntries().forEach((x) => { if (x.v.cv === e.v.cv && !x.v.draft && (x.v.r || 0) > (best.v.r || 0)) best = x; });
     return best;
+  }
+  // A new email or reply you write: when its subject names a label's number (CDF 938), the email joins that label
+  let subjWatch = 0;
+  function watchComposeSubject(item) {
+    clearInterval(subjWatch);
+    let last = null;
+    subjWatch = setInterval(() => {
+      if (!ctx || ctx.item !== item || !ctx.compose) { clearInterval(subjWatch); return; }
+      try {
+        item.subject.getAsync((r) => {
+          if (!ok(r) || !ctx || ctx.item !== item) return;
+          const sj = r.value || "";
+          if (sj === last) return;
+          last = sj;
+          if (sj !== subject) { subject = sj; safely("hdr", renderHeader); }
+          if (props) safely("composeLabel", composeSubjectLabels);
+        });
+      } catch (e) { clearInterval(subjWatch); }
+    }, 3000);
+  }
+  function composeSubjectLabels() {
+    const st = getTagStore();
+    if (!st.autoLabel || !props || !ctx || !ctx.compose) return;
+    const names = allTagNames();
+    const add = [];
+    refsOf(subject || "", parsePrefixes((prefsCache || getPrefs()).prefixes)).forEach((r) => {
+      const t = names.find((x) => lc(x) === lc(r));
+      if (t && !emailTags.some((x) => lc(x) === lc(t)) && !lblOff.some((x) => lc(x) === lc(t)) && !add.includes(t)) add.push(t);
+    });
+    if (add.length) changeEmailTags(() => { add.forEach((t) => emailTags.push(t)); }, "This email is in " + add.join(", "));
   }
   // Writing a reply in a labelled conversation: the reply gets the same labels, so the label follows your answer too.
   function replyLabels() {
@@ -1597,12 +1642,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     changeEmailTags(() => { add.forEach((t) => emailTags.push(t)); }, "Your reply is in " + add.join(", "));
   }
   function openEntry(e) {
+    if (isLabelEntry(e)) { switchTab("tag"); return openTag((e.v.lb || [e.v.s])[0]); }
     if (!e.v.draft) return openEmail(e.id);
     const others = allEntries().filter((x) => x.v.cv && x.v.cv === e.v.cv && !x.v.draft).sort((a, b) => (b.v.r || 0) - (a.v.r || 0));
     if (others.length) { openEmail(others[0].id); toast("Your reply is in Sent Items; opened the latest email of the thread"); }
     else openEmail(e.id);
   }
   function openLatest(e) {
+    if (isLabelEntry(e)) return openEntry(e);
     const l = latestInThread(e);
     openEmail(l.id);
     if (l !== e) toast("Opened the latest email in this thread");
@@ -1884,7 +1931,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     allEntries().forEach((e) => e.tags.forEach((t) => {
       const s = map.get(lc(t));
       if (!s) return;
-      s.mails.add(e.key); s.u = Math.max(s.u, e.v.u || 0); s.r = Math.max(s.r, e.v.r || 0);
+      if (!isLabelEntry(e)) s.mails.add(e.key);
+      s.u = Math.max(s.u, e.v.u || 0); s.r = Math.max(s.r, e.v.r || 0);
       const start = e.v.r || 0;
       if (start && (!s.first || start < s.first)) s.first = start;
       notesWithTag(e, t).forEach((n) => {
@@ -2025,7 +2073,50 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     counts.filter((c) => c.n).forEach((c) => bar.appendChild(h("div", { class: "stage-seg", style: "--c:" + c.g.color + ";flex:" + c.n, title: c.n + " × " + c.g.name },
       h("b", { text: c.n }), h("span", { text: c.n > 1 || counts.filter((x) => x.n).length < 4 ? c.g.name : c.g.short }))));
   }
-  function openTag(name) { openTagName = name; renderTags(); renderRail(); }
+  // labelPinned: you went to this label yourself, so opening another email in Outlook doesn't pull you away
+  let labelPinned = false;
+  function openTag(name, byJump) { openTagName = name; labelPinned = !byJump; renderTags(); renderRail(); }
+
+  // ----- notes on a label itself: kept in the overview, not on the email that happens to be open -----
+  const isLabelEntry = (e) => !!(e && e.v && e.v.lab);
+  function labelEntryKey(name) {
+    const idx = getIndex();
+    const k = Object.keys(idx).find((x) => idx[x].lab && (idx[x].lb || []).some((t) => lc(t) === lc(name)));
+    return k || "label:" + lc(name);
+  }
+  function addLabelNote(name, text) {
+    text = String(text || "").trim().slice(0, 600);
+    if (!text || !name) return false;
+    const idx = getIndex(), k = labelEntryKey(name), now = Date.now();
+    const v = idx[k] || { lab: 1, n: [], r: now };
+    v.lab = 1; v.s = name; v.lb = [name]; v.u = now; v.f = "Me";
+    v.n = (v.n || []).concat([{ id: newId(), text, color: NOTE_HEX, due: "", tags: [], created: now, updated: now }]);
+    idx[k] = v;
+    registerTags([name]);
+    setIndex(idx);
+    refreshBadges(); renderTags();
+    toast("Saved on " + name + " (not on the open email)");
+    return true;
+  }
+  function labelNoteChange(e, id, fn, msg) {
+    const idx = getIndex(), v = idx[e.key];
+    if (!v) return;
+    v.n = (v.n || []).map((n) => (n.id === id ? fn(Object.assign({}, n)) : n)).filter(Boolean);
+    v.u = Date.now();
+    if (!v.n.length) delete idx[e.key]; else idx[e.key] = v;
+    setIndex(idx);
+    refreshBadges(); if (tab === "tag") renderTags(); if (tab === "today") renderToday(); if (tab === "all") renderIndex();
+    if (msg) toast(msg);
+  }
+  async function editLabelNote(e, n) {
+    const v = await dialog({ title: "Edit note on " + (e.v.lb || [e.v.s])[0], input: true, maxLength: 600, value: n.text, ok: "Save" });
+    if (v === null || v === undefined || !String(v).trim()) return;
+    labelNoteChange(e, n.id, (x) => { x.hist = [{ text: x.text, at: x.updated }].concat(x.hist || []).slice(0, 3); x.text = String(v).trim().slice(0, 600); x.updated = Date.now(); return x; }, "Note saved");
+  }
+  async function deleteLabelNote(e, n) {
+    const okk = await dialog({ title: "Delete this note?", text: n.text.slice(0, 120), ok: "Delete", danger: true });
+    if (okk) labelNoteChange(e, n.id, () => null, "Note deleted");
+  }
 
   // ----- the label rail: every label, top to bottom, one click away -----
   function wireRail() {
@@ -2250,7 +2341,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       if (!e.tags.some((t) => lc(t) === lc(name))) return;
       rows.push({ e, notes: notesWithTag(e, name) });
     });
-    rows.sort((a, b) => (b.notes.some((n) => !isDone(n)) - a.notes.some((n) => !isDone(n))) || b.e.v.u - a.e.v.u);
+    rows.sort((a, b) => isLabelEntry(b.e) - isLabelEntry(a.e) || (b.notes.some((n) => !isDone(n)) - a.notes.some((n) => !isDone(n))) || b.e.v.u - a.e.v.u);
     return rows;
   }
   function renderTagDetail() {
@@ -2273,7 +2364,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     const total = rows.reduce((s, r) => s + r.notes.length, 0);
     const open = rows.reduce((s, r) => s + r.notes.filter((n) => !isDone(n)).length, 0);
     $("tagStats").textContent = rows.length
-      ? pl(rows.length, "email") + ", " + pl(total, "note") + ", " + open + " open"
+      ? pl(rows.filter((r) => !isLabelEntry(r.e)).length, "email") + ", " + pl(total, "note") + ", " + open + " open"
       : "Nothing has this label yet.";
     const cur = stageOf(name);
     const sp = $("stagePick");
@@ -2282,9 +2373,9 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       title: cur && cur.id === g.id ? "Click to clear the stage" : "Set stage: " + g.name,
       onclick: () => { setStage(name, cur && cur.id === g.id ? "" : g.id); renderTags(); toast(cur && cur.id === g.id ? "Stage cleared" : "Stage: " + g.name); } },
       h("i", { style: "background:" + g.color }), h("span", { text: g.short }))));
-    $("tagAddHere").hidden = !ctx;
+    $("tagAddHere").hidden = true; // the note box below is always there
     $("tagLabelHere").hidden = !ctx || emailTags.some((x) => lc(x) === lc(name));
-    $("tagLabelHere").textContent = "Label this " + (ctx && ctx.meeting ? "meeting" : "email");
+    $("tagLabelHere").textContent = "Add the open " + (ctx && ctx.meeting ? "meeting" : "email") + " to this label";
     $("tagInsert").hidden = !(ctx && ctx.compose) || !open;
     $("tagMail").hidden = !rows.length;
     // courts for this label
@@ -2303,7 +2394,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     // timeline: newest first
     const box = $("tagMails");
     box.innerHTML = "";
-    const newest = rows.slice().sort((a, b) => (b.e.v.r || b.e.v.u || 0) - (a.e.v.r || a.e.v.u || 0))[0];
+    const newest = rows.filter((r) => !isLabelEntry(r.e)).sort((a, b) => (b.e.v.r || b.e.v.u || 0) - (a.e.v.r || a.e.v.u || 0))[0];
     if (newest) {
       const l = latestInThread(newest.e);
       box.appendChild(h("button", { class: "latest", title: "Open the latest email of this label", onclick: () => openEmail(l.id) },
@@ -2325,9 +2416,11 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   // A compact block: email subject (opens it) + its notes
   function mailBlock(e, list, inTimeline) {
-    const block = h("div", { class: "mblock" + (inTimeline ? " in-tl" : "") },
-      h("button", { class: "mblock-subj", title: e.v.draft ? "Your reply – opens the latest email in this thread" : "Open", onclick: () => openEntry(e) },
-        ic(e.v.mt ? "cal" : e.v.draft ? "compose" : "mail", 14), h("bdi", { text: e.v.s })));
+    const lab = isLabelEntry(e);
+    const block = h("div", { class: "mblock" + (inTimeline ? " in-tl" : "") + (lab ? " lab" : "") },
+      lab ? h("div", { class: "mblock-subj lab-h" }, ic("tag", 14), h("span", { text: "Notes on this label" }))
+        : h("button", { class: "mblock-subj", title: e.v.draft ? "Your reply – opens the latest email in this thread" : "Open", onclick: () => openEntry(e) },
+          ic(e.v.mt ? "cal" : e.v.draft ? "compose" : "mail", 14), h("bdi", { text: e.v.s })));
     if (!list.length) block.appendChild(h("div", { class: "mnote-empty muted small", text: "Labeled, no notes" }));
     list.slice().sort((a, b) => isDone(a) - isDone(b) || b.updated - a.updated).forEach((n) => {
       const st = statusOf(n.color), ds = dueState(n);
@@ -3065,6 +3158,7 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   // a note on another email: done/reopen/due here, editing opens that email
   function remoteEdit(e, n) {
+    if (isLabelEntry(e)) return editLabelNote(e, n);
     const pend = rsGet(PEND_KEY) || {};
     pend[n.id] = Object.assign({}, pend[n.id] || {}, { edit: 1, at: Date.now() });
     rsSet(PEND_KEY, pend);
@@ -3074,16 +3168,19 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   }
   function remoteNoteMenu(ev, e, n) {
     const done = isDone(n);
-    const items = [{ label: "Edit", hint: "opens the email", onClick: () => remoteEdit(e, n) }];
+    const items = [{ label: "Edit", hint: isLabelEntry(e) ? "" : "opens the email", onClick: () => remoteEdit(e, n) }];
     if (!isInfo(n)) items.push({ label: done ? "Reopen" : "Mark as done", onClick: () => remoteUpdate(e, n.id, done ? { reopen: 1, done: 0 } : { done: 1, reopen: 0 }, done ? "Note reopened" : "Marked as done") });
     if (!done && !isInfo(n)) {
       items.push(court(n) === "mine" ? { label: "Hand over", hint: "waiting for them", onClick: () => handOver(e, n) } : { label: "Back to my court", onClick: () => backToMe(e, n) });
       items.push({ label: n.due ? "Move the due date…" : "Set a due date…", onClick: () => snoozeMenu(at(ev), n.due,
         (v) => remoteUpdate(e, n.id, { due: v }, v ? "Due " + fmtShort(dueTs(v)) : "Due date removed")) });
     }
-    items.push({ label: "Open this email", onClick: () => openEmail(e.id) });
-    const l = latestInThread(e);
-    if (l !== e) items.push({ label: "Open the latest email", hint: fmtShort(l.v.r || l.v.u), onClick: () => openEmail(l.id) });
+    if (isLabelEntry(e)) items.push({ label: "Delete", danger: true, onClick: () => deleteLabelNote(e, n) });
+    else {
+      items.push({ label: "Open this email", onClick: () => openEmail(e.id) });
+      const l = latestInThread(e);
+      if (l !== e) items.push({ label: "Open the latest email", hint: fmtShort(l.v.r || l.v.u), onClick: () => openEmail(l.id) });
+    }
     items.push({ label: "Copy text", onClick: () => copyPlain(n.text).then((okk) => toast(okk ? "Note copied" : "Couldn't copy")) });
     popover(at(ev), items);
   }
@@ -3517,7 +3614,13 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
       else if (e.key === "Backspace" && !el.value && emailTags.length) removeEmailTag(emailTags[emailTags.length - 1]);
     });
     el.addEventListener("change", () => { if (allTagNames().some((t) => lc(t) === lc(el.value.trim()))) addEmailTagFromInput(); });
-    $("tagAddHere").onclick = () => { const t = openTagName; switchTab("item"); resetComposer(); draftTags = [t]; renderTagComposer(); $("input").focus(); };
+    $("tagAddHere").onclick = () => { $("tagNoteBox").hidden = false; $("tagNoteInput").focus(); };
+    const tni = $("tagNoteInput");
+    tni.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (addLabelNote(openTagName, tni.value)) tni.value = ""; }
+      if (e.key === "Escape") { tni.value = ""; tni.blur(); }
+    });
+    $("tagNoteSave").onclick = () => { if (addLabelNote(openTagName, tni.value)) tni.value = ""; };
     $("tagByStage").onchange = () => { const st = getTagStore(); st.byStage = $("tagByStage").checked; saveTagStore(st); renderTags(); };
     $("tagAuto").onchange = () => {
       const st = getTagStore(); st.autoLabel = $("tagAuto").checked; saveTagStore(st);

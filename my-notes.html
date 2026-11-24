@@ -589,6 +589,13 @@
     .here-chip.on { opacity: 1; border-color: var(--blue); }
     .here-chip:hover { opacity: 1; }
     .here-notes { margin-inline-start: auto; font-size: 12px; }
+    .here-bar.other { background: var(--sheet); border: 1px dashed var(--rule); }
+    .here-bar.other .here-k { color: var(--ink3); font-weight: 400; }
+    .here-subj { font-weight: 600; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag-note { display: flex; gap: 6px; align-items: flex-start; margin-top: 10px; }
+    .tag-note textarea { flex: 1; min-height: 32px; resize: vertical; font: inherit; font-size: 12.5px; padding: 6px 8px; }
+    .mblock.lab { border-inline-start: 3px solid var(--blue); padding-inline-start: 8px; }
+    .mblock-subj.lab-h { cursor: default; color: var(--blue-ink); font-weight: 600; }
     .dropzone { display: none; align-items: center; justify-content: center; gap: 6px; margin: 0 0 10px; padding: 9px; border: 1.5px dashed var(--rule); border-radius: 6px;
       font-size: 12px; color: var(--ink3); transition: background .12s, border-color .12s; }
     body.is-compose .dropzone { display: flex; }
@@ -866,6 +873,10 @@
           <button class="btn sm" id="tagMail">Email summary</button>
           <button class="btn sm" id="tagInsert">Insert open items</button>
         </div>
+        <div class="tag-note" id="tagNoteBox">
+          <textarea id="tagNoteInput" class="field" rows="1" dir="auto" placeholder="Note on this label – not on the open email" aria-label="Note on this label"></textarea>
+          <button class="btn sm primary" id="tagNoteSave" type="button" title="Enter to save · Shift+Enter for a new line">Save</button>
+        </div>
         <div id="tagMails"></div>
       </div>
     </section>
@@ -972,6 +983,6 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="cdf-link.js?v=3.4.0"></script>
-  <script src="my-notes.js?v=3.9.3"></script>
+  <script src="my-notes.js?v=4.0.0"></script>
 </body>
 </html>
